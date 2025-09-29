@@ -1,0 +1,22 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "backend/Dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 100
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+[build.buildCommand]
+# Railway build command - install dependencies and browsers
+command = "cd backend && poetry install && poetry run playwright install chromium --with-deps"
+
+[build.watchPatterns]
+patterns = ["backend/**/*"]
+
+[variables]
+# Railway environment variables
+PORT = "8000"
+PYTHON_VERSION = "3.11"
+POETRY_VENV_IN_PROJECT = "1"

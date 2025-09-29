@@ -1,0 +1,58 @@
+name: Deploy Backend to Cloud Run
+
+on:
+  push:
+    branches: [ main ]
+    paths: 
+      - 'backend/**'
+      - 'cloudbuild-artifact.yaml'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch: # Allow manual trigger
+
+env:
+  PROJECT_ID: scra-b341a
+  SERVICE_NAME: scra-backend
+  REGION: us-central1
+
+jobs:
+  deploy-backend:
+    name: Deploy Backend
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.GOOGLE_CLOUD_SERVICE_ACCOUNT_KEY }}'
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Configure Docker to use gcloud as a credential helper
+        run: |
+          gcloud auth configure-docker us-central1-docker.pkg.dev
+
+      - name: Deploy to Cloud Run via Cloud Build
+        run: |
+          gcloud builds submit --config cloudbuild-artifact.yaml
+
+      - name: Update Cloud Run service environment variables
+        run: |
+          gcloud run services update ${{ env.SERVICE_NAME }} \
+            --region=${{ env.REGION }} \
+            --set-env-vars="SUPABASE_URL=${{ secrets.SUPABASE_URL }}" \
+            --set-env-vars="SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            --set-env-vars="RESIDENTIAL_PROXY_SERVER=${{ secrets.RESIDENTIAL_PROXY_SERVER }}" \
+            --set-env-vars="RESIDENTIAL_PROXY_USERNAME=${{ secrets.RESIDENTIAL_PROXY_USERNAME }}" \
+            --set-env-vars="RESIDENTIAL_PROXY_PASSWORD=${{ secrets.RESIDENTIAL_PROXY_PASSWORD }}"
+
+      - name: Verify deployment
+        run: |
+          SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} --region=${{ env.REGION }} --format='value(status.url)')
+          echo "Backend deployed to: $SERVICE_URL"
+          curl -f "$SERVICE_URL/health" || exit 1

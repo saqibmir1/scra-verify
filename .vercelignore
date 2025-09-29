@@ -1,0 +1,11 @@
+# Ignore backend directory and related files
+backend/
+railway.toml
+debug-deployment.sh
+test-build.sh
+
+# Ignore other unnecessary files
+.git/
+.github/
+*.md
+*.log
