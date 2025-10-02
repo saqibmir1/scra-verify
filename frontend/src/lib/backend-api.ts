@@ -127,7 +127,7 @@ class BackendAPI {
   constructor() {
     let baseUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
     // Remove any unwanted port numbers from production URLs
-    if (baseUrl.includes('scraverify-production.up.railway.app') && baseUrl.includes(':8000')) {
+    if (baseUrl.includes('railway.app') && baseUrl.includes(':8000')) {
       baseUrl = baseUrl.replace(':8000', '');
     }
     this.baseUrl = baseUrl;
