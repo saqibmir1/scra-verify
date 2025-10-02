@@ -17,11 +17,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         
+      - name: Install Railway CLI
+        run: |
+          curl -fsSL https://railway.app/install.sh | sh
+          echo "$HOME/.railway/bin" >> $GITHUB_PATH
+          
       - name: Deploy to Railway
-        uses: railway/cli@v3
-        with:
-          command: up --service backend --detach
+        run: |
+          railway up --service backend --detach
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT: production
 
