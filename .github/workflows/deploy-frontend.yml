@@ -30,10 +30,6 @@ jobs:
       working-directory: ./frontend
       run: npm ci
       
-    - name: Build application
-      working-directory: ./frontend
-      run: npm run build
-      
     - name: Deploy to Vercel (Preview)
       if: github.event_name == 'pull_request'
       working-directory: ./frontend
