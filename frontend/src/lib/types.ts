@@ -47,6 +47,31 @@ export interface CertificateResponse {
   eligibility: Eligibility;
 }
 
+// PDF Split Types
+export interface IndividualPDF {
+  filename: string;
+  data: string; // base64
+  size: number;
+  pages: string;
+  record_index: number;
+}
+
+export interface ZipArchive {
+  filename: string;
+  data: string; // base64
+  size: number;
+  count: number;
+}
+
+export interface PDFSplitResult {
+  success: boolean;
+  individual_pdfs: IndividualPDF[];
+  zip_archive: ZipArchive | null;
+  total_records: number;
+  total_pdfs_created: number;
+  error?: string;
+}
+
 export interface LoginResponse {
   authenticationStatus: "AUTHENTICATED" | "FAILED";
   passwordLastChanged: number;

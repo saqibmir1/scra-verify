@@ -15,6 +15,7 @@ pydantic = "*"
 python-dotenv = "*"
 httpx = "*"
 supabase = "^2.18.1"
+pypdf = "*"
 
 
 [build-system]

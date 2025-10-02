@@ -553,6 +553,36 @@ export default function MultiRecordPage() {
                             Download Results PDF ({Math.round((result.data.automationResult.pdf.size || 0) / 1024)}KB)
                           </button>
                         )}
+
+                        {/* ZIP Download for Individual PDFs */}
+                        {result.data?.automationResult?.pdf_split?.success && result.data.automationResult.pdf_split.zip_archive && (
+                          <button
+                            onClick={() => {
+                              const zipData = result.data.automationResult.pdf_split.zip_archive;
+                              const byteCharacters = atob(zipData.data);
+                              const byteNumbers = new Array(byteCharacters.length);
+                              for (let i = 0; i < byteCharacters.length; i++) {
+                                byteNumbers[i] = byteCharacters.charCodeAt(i);
+                              }
+                              const byteArray = new Uint8Array(byteNumbers);
+                              const blob = new Blob([byteArray], { type: 'application/zip' });
+                              const url = URL.createObjectURL(blob);
+                              const link = document.createElement('a');
+                              link.href = url;
+                              link.download = zipData.filename;
+                              document.body.appendChild(link);
+                              link.click();
+                              document.body.removeChild(link);
+                              URL.revokeObjectURL(url);
+                            }}
+                            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 transition-colors ml-3"
+                          >
+                            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                            </svg>
+                            Download All Individual PDFs ({result.data.automationResult.pdf_split.zip_archive.count} files, {Math.round(result.data.automationResult.pdf_split.zip_archive.size / 1024)}KB)
+                          </button>
+                        )}
                       </div>
                     </div>
 

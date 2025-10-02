@@ -13,6 +13,7 @@ import base64 # Add this import
 from playwright.async_api import async_playwright, Browser, Page, TimeoutError
 from supabase_client import get_supabase_service
 from csv_processor import SCRARecord, process_csv_for_scra
+from pdf_splitter import split_scra_multi_record_pdf
 
 
 def is_development_mode() -> bool:
@@ -1409,7 +1410,8 @@ class PuppeteerSCRAAgent:
                     'filename': pdf_filename,
                     'data': pdf_base64,
                     'size': len(pdf_data),
-                    'timestamp': datetime.now().isoformat()
+                    'timestamp': datetime.now().isoformat(),
+                    'raw_bytes': pdf_data  # Store raw bytes for splitting
                 }
                 
                 # Upload to Supabase Storage immediately
@@ -2354,7 +2356,8 @@ class PuppeteerSCRAAgent:
                     'filename': pdf_filename,
                     'data': pdf_base64,
                     'size': len(pdf_data),
-                    'timestamp': datetime.now().isoformat()
+                    'timestamp': datetime.now().isoformat(),
+                    'raw_bytes': pdf_data  # Store raw bytes for splitting
                 }
                 
                 # Upload to Supabase Storage immediately
@@ -2789,8 +2792,45 @@ class PuppeteerSCRAAgent:
             print(f"❌ No screenshots to add")
         
         if hasattr(self, 'pdf_data') and self.pdf_data:
-            response['automationResult']['pdf'] = self.pdf_data
+            # Create a copy of PDF data without raw_bytes for response
+            pdf_response_data = {k: v for k, v in self.pdf_data.items() if k != 'raw_bytes'}
+            response['automationResult']['pdf'] = pdf_response_data
             print(f"✅ Added PDF data to response: {self.pdf_data['filename']} ({len(self.pdf_data['data'])} chars)")
+            
+            # Split PDF into individual certificates if we have raw bytes
+            if 'raw_bytes' in self.pdf_data and len(records) > 1:
+                print(f"🔪 Splitting PDF into {len(records)} individual certificates...")
+                try:
+                    # Create record data for naming
+                    record_data = [record.to_dict() for record in records]
+                    
+                    # Split the PDF
+                    split_result = split_scra_multi_record_pdf(
+                        self.pdf_data['raw_bytes'], 
+                        record_data
+                    )
+                    
+                    if split_result.get('success'):
+                        response['automationResult']['pdf_split'] = split_result
+                        print(f"✅ PDF split successful: {split_result['total_pdfs_created']} individual PDFs created")
+                        print(f"📦 ZIP archive created: {split_result['zip_archive']['filename']}")
+                    else:
+                        print(f"❌ PDF splitting failed: {split_result.get('error', 'Unknown error')}")
+                        response['automationResult']['pdf_split'] = {
+                            'success': False,
+                            'error': split_result.get('error', 'PDF splitting failed')
+                        }
+                        
+                except Exception as e:
+                    print(f"❌ Error during PDF splitting: {e}")
+                    response['automationResult']['pdf_split'] = {
+                        'success': False,
+                        'error': str(e)
+                    }
+            elif len(records) == 1:
+                print(f"ℹ️ Single record - no PDF splitting needed")
+            else:
+                print(f"⚠️ No raw PDF bytes available for splitting")
         else:
             print(f"❌ No PDF data to add")
         
