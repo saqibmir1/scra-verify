@@ -159,4 +159,3 @@ railway deploy
 
 ---
 
-**Built with ❤️ for military service verification**
