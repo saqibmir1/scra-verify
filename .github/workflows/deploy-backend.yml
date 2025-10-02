@@ -23,7 +23,6 @@ jobs:
           
       - name: Deploy to Railway
         run: |
-          railway login --token ${{ secrets.RAILWAY_TOKEN }}
           railway link ${{ secrets.RAILWAY_PROJECT_ID }}
           railway up --service backend
         env:
