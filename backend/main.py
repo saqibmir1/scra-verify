@@ -1,5 +1,6 @@
 """
 FastAPI server for SCRA military active duty verification
+Updated: Testing Railway deployment with Project Token
 """
 
 import os
