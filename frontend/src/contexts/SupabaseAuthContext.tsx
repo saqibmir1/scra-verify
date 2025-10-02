@@ -65,6 +65,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const { data: { subscription } } = onAuthStateChange((user) => {
       setUser(user);
       setLoading(false);
+      
+      // Handle OAuth callback - clean up URL after successful authentication
+      if (user && typeof window !== 'undefined') {
+        const url = new URL(window.location.href);
+        if (url.hash.includes('access_token=')) {
+          // Clear the hash and redirect to clean URL
+          window.history.replaceState({}, document.title, url.pathname + url.search);
+        }
+      }
     });
 
     return () => subscription.unsubscribe();

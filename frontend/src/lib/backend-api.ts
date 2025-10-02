@@ -262,9 +262,19 @@ class BackendAPI {
   // Health check
   async healthCheck(): Promise<boolean> {
     try {
-      const response = await fetch(`${this.baseUrl}/health`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      
+      console.log(`🔍 Health check: ${this.baseUrl}/health`);
+      const response = await fetch(`${this.baseUrl}/health`, {
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      console.log(`✅ Health check response: ${response.status} ${response.ok}`);
       return response.ok;
-    } catch {
+    } catch (error) {
+      console.error(`❌ Health check failed:`, error);
       return false;
     }
   }
