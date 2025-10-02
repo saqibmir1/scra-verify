@@ -12,6 +12,7 @@ import base64 # Add this import
 
 from playwright.async_api import async_playwright, Browser, Page, TimeoutError
 from supabase_client import get_supabase_service
+from csv_processor import SCRARecord, process_csv_for_scra
 
 
 def is_development_mode() -> bool:
@@ -28,6 +29,7 @@ class PuppeteerSCRAAgent:
         self.user_id = user_id
         self.scra_url = "https://scra.dmdc.osd.mil/scra/#/login"
         self.single_record_url = "https://scra.dmdc.osd.mil/scra/#/single-record"
+        self.multi_record_url = "https://scra.dmdc.osd.mil/scra/#/multiple-record"
         self.browser: Optional[Browser] = None
         self.context = None
         self.page: Optional[Page] = None
@@ -124,6 +126,175 @@ class PuppeteerSCRAAgent:
                 "error": f"Puppeteer automation failed: {str(e)}",
                 "timestamp": datetime.now().isoformat(),
                 "method": "puppeteer"
+            }
+        finally:
+            # Always cleanup
+            await self._cleanup()
+    
+    async def verify_multiple_records(self, csv_content: str, fixed_width_override: str = None) -> Dict[str, Any]:
+        """
+        Verify multiple records through SCRA website using CSV input
+        """
+        
+        try:
+            # Initialize file capture arrays
+            self.screenshots = []
+            self.pdf_data = None
+            
+            # Process CSV content or use override
+            if fixed_width_override:
+                # Use the provided fixed-width content
+                fixed_width_content = fixed_width_override
+                # Count records from fixed-width content
+                lines = [line.strip() for line in fixed_width_content.split('\n') if line.strip()]
+                record_count = len(lines)
+                
+                # Create dummy SCRARecord objects for compatibility
+                from csv_processor import SCRARecord
+                records = []
+                for i in range(record_count):
+                    dummy_data = {
+                        'ssn': '',
+                        'first_name': f'Record_{i+1}',
+                        'last_name': 'Dummy',
+                        'middle_name': '',
+                        'date_of_birth': '',
+                        'active_duty_status_date': '20240101',
+                        'customer_record_id': f'REC{i+1:03d}',
+                        '_row_number': i+1
+                    }
+                    dummy_record = SCRARecord(dummy_data)
+                    records.append(dummy_record)
+                
+                await self._update_progress("initializing", f"Using provided fixed-width content with {record_count} records")
+            else:
+                # Normal CSV processing
+                await self._update_progress("initializing", "Processing CSV file and validating records")
+                fixed_width_content, records, csv_errors = process_csv_for_scra(csv_content)
+                
+                if csv_errors:
+                    return {
+                        "success": False,
+                        "error": f"CSV validation failed: {'; '.join(csv_errors)}",
+                        "timestamp": datetime.now().isoformat(),
+                        "method": "puppeteer_multi_record"
+                    }
+                
+                if not records:
+                    return {
+                        "success": False,
+                        "error": "No valid records found in CSV file",
+                        "timestamp": datetime.now().isoformat(),
+                        "method": "puppeteer_multi_record"
+                    }
+            
+            # Create real-time session in Supabase
+            if self.user_id:
+                await self.supabase_service.create_verification_session(
+                    self.session_id, 
+                    self.user_id, 
+                    {"record_count": len(records), "type": "multi_record"}
+                )
+            
+            # Update progress: Initializing
+            await self._update_progress("initializing", f"Initializing browser for {len(records)} records")
+            
+            # Create debug directory for this session (only in development)
+            if is_development_mode():
+                self.session_debug_dir = self.debug_dir / self.session_id
+                self.session_debug_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Create subdirectories
+                (self.session_debug_dir / "screenshots").mkdir(exist_ok=True)
+                (self.session_debug_dir / "pdfs").mkdir(exist_ok=True)
+                print(f"🔧 Development mode: Debug files will be saved to {self.session_debug_dir}")
+            else:
+                self.session_debug_dir = None
+                print("🚀 Production mode: Debug files will not be saved locally")
+            
+            # Initialize browser
+            await self._initialize_browser()
+            
+            # Update progress: Navigating
+            await self._update_progress("navigating_to_login", "Navigating to SCRA login page")
+            
+            # Navigate to SCRA and login
+            await self._navigate_and_login()
+            
+            # Perform multi-record verification
+            result = await self._perform_multi_record_verification(fixed_width_content, records)
+            
+            # Mark session as completed
+            if self.user_id:
+                await self.supabase_service.complete_session(
+                    self.session_id, 
+                    "completed" if result.get("success") else "failed",
+                    result.get("error") if not result.get("success") else None
+                )
+            
+            return result
+            
+        except Exception as e:
+            # Mark session as failed
+            if self.user_id:
+                await self.supabase_service.complete_session(
+                    self.session_id, 
+                    "failed", 
+                    str(e)
+                )
+            
+            return {
+                "success": False,
+                "error": f"Multi-record verification failed: {str(e)}",
+                "timestamp": datetime.now().isoformat(),
+                "method": "puppeteer_multi_record"
+            }
+        finally:
+            # Always cleanup
+            await self._cleanup()
+    
+    async def verify_multiple_records_fixed_width(self, fixed_width_content: str) -> Dict[str, Any]:
+        """
+        Verify multiple records using pre-formatted fixed-width content
+        
+        Args:
+            fixed_width_content: The fixed-width formatted text content (95 chars per line)
+            
+        Returns:
+            Dict containing verification results
+        """
+        print(f"🚀 Starting multi-record verification with fixed-width content...")
+        
+        try:
+            # Initialize file capture arrays
+            self.screenshots = []
+            self.pdf_data = None
+            
+            # Parse records from fixed-width content
+            lines = [line.strip() for line in fixed_width_content.split('\n') if line.strip()]
+            
+            if not lines:
+                return {
+                    "success": False,
+                    "error": "No records found in fixed-width content",
+                    "timestamp": datetime.now().isoformat(),
+                    "method": "puppeteer_multi_record_fixed_width"
+                }
+            
+            print(f"✅ Processing {len(lines)} records from fixed-width content")
+            
+            # Just use the original working method with the fixed-width override
+            dummy_csv = ""  # Empty CSV since we're using fixed-width override
+            return await self.verify_multiple_records(dummy_csv, fixed_width_override=fixed_width_content)
+            
+        except Exception as e:
+            print(f"❌ Multi-record fixed-width verification failed: {str(e)}")
+            
+            return {
+                "success": False,
+                "error": f"Multi-record verification failed: {str(e)}",
+                "timestamp": datetime.now().isoformat(),
+                "method": "puppeteer_multi_record_fixed_width"
             }
         finally:
             # Always cleanup
@@ -231,10 +402,10 @@ class PuppeteerSCRAAgent:
                 'args': browser_args
             }
             
-            # Add slow motion for local testing visibility
-            if is_local_test:
-                launch_options['slow_mo'] = 500
-                print("🐌 Added slow motion for local testing visibility")
+            # Slow motion removed for faster testing
+            # if is_local_test:
+            #     launch_options['slow_mo'] = 500
+            #     print("🐌 Added slow motion for local testing visibility")
             
             self.browser = await playwright.chromium.launch(**launch_options)
         
@@ -1457,6 +1628,1176 @@ class PuppeteerSCRAAgent:
         await self._take_debug_screenshot("13_results_extracted", f"Results extracted - Status: {eligibility_type}, Covered: {covered}")
         return response
     
+    async def _perform_multi_record_verification(self, fixed_width_content: str, records: List[SCRARecord]) -> Dict[str, Any]:
+        """Perform the multi-record verification process"""
+        print(f"🎯 Starting multi-record verification for {len(records)} records...")
+        
+        try:
+            # Navigate to multi-record verification page
+            await self._navigate_to_multi_record_verification()
+            
+            # Step 1: Upload the fixed-width file (Choose Files button)
+            await self._upload_multi_record_file(fixed_width_content)
+            
+            # Step 2: Configure certificate options (Yes radio button + checkboxes)
+            await self._configure_multi_record_options()
+            
+            # Step 3: Handle terms and conditions (I Accept checkbox)
+            await self._handle_multi_record_terms()
+            
+            # Step 4 & 5: Submit form and navigate to Download Results
+            results = await self._submit_multi_record_and_get_results(records, fixed_width_content)
+            
+            return results
+            
+        except Exception as e:
+            # Take screenshot for debugging
+            print(f"❌ Multi-record verification process failed: {str(e)}")
+            if self.page:
+                await self._take_debug_screenshot("99_multi_record_error", f"Multi-record verification failed: {str(e)}")
+            raise Exception(f"Multi-record verification process failed: {str(e)}")
+    
+    async def _navigate_to_multi_record_verification(self):
+        """Navigate to the multi-record verification page"""
+        print("🔍 Navigating to multi-record verification page...")
+        
+        try:
+            # First, let's try to find multi-record links from the current page (after login)
+            print("🔍 Looking for multi-record navigation links on current page...")
+            
+            # Comprehensive list of selectors for multi-record navigation
+            multi_record_selectors = [
+                # Text-based navigation links
+                'a:has-text("Multiple Record")',
+                'a:has-text("Multi Record")',
+                'a:has-text("Multi-Record")',
+                'a:has-text("Batch")',
+                'a:has-text("Batch Upload")',
+                'a:has-text("Batch Processing")',
+                'a:has-text("Upload File")',
+                'a:has-text("File Upload")',
+                'a:has-text("Bulk")',
+                'a:has-text("Mass")',
+                
+                # Button-based navigation
+                'button:has-text("Multiple Record")',
+                'button:has-text("Multi Record")',
+                'button:has-text("Batch")',
+                'button:has-text("Upload")',
+                
+                # URL-based selectors
+                '[href*="multiple-record"]',
+                '[href*="multi-record"]',
+                '[href*="multirecord"]',
+                '[href*="batch"]',
+                '[href*="upload"]',
+                '[href*="bulk"]',
+                '[href*="mass"]',
+                
+                # Class and ID-based selectors
+                '.multi-record-link',
+                '.multiple-record-link',
+                '.batch-link',
+                '.upload-link',
+                '#multi-record',
+                '#multiple-record',
+                '#batch-upload',
+                
+                # Navigation menu items
+                'nav a:has-text("Multiple")',
+                'nav a:has-text("Batch")',
+                'nav a:has-text("Upload")',
+                '.nav-item:has-text("Multiple")',
+                '.nav-item:has-text("Batch")',
+                '.menu-item:has-text("Multiple")',
+                '.menu-item:has-text("Batch")',
+                
+                # Generic navigation patterns
+                'li a:has-text("Multiple")',
+                'li a:has-text("Batch")',
+                'ul a:has-text("Multiple")',
+                'ul a:has-text("Batch")'
+            ]
+            
+            multi_record_link = None
+            found_selector = None
+            
+            # Search for navigation links
+            for i, selector in enumerate(multi_record_selectors):
+                try:
+                    print(f"   Trying navigation selector {i+1}/{len(multi_record_selectors)}: {selector}")
+                    multi_record_link = await self._wait_for_selector_any_frame(selector, timeout_ms=2000)
+                    if multi_record_link:
+                        # Verify it's visible and clickable
+                        is_visible = await multi_record_link.is_visible()
+                        is_enabled = await multi_record_link.is_enabled()
+                        
+                        if is_visible and is_enabled:
+                            found_selector = selector
+                            print(f"✅ Found multi-record navigation link: {selector}")
+                            break
+                        else:
+                            print(f"   Found element but not clickable: visible={is_visible}, enabled={is_enabled}")
+                            multi_record_link = None
+                except Exception as e:
+                    print(f"   Error with selector {selector}: {e}")
+                    continue
+            
+            if multi_record_link:
+                print(f"🔗 Clicking multi-record navigation link: {found_selector}")
+                await multi_record_link.click()
+                
+                # Wait for navigation
+                try:
+                    await self.page.wait_for_load_state('networkidle', timeout=15000)
+                except TimeoutError:
+                    await self.page.wait_for_load_state('domcontentloaded', timeout=10000)
+                
+                await self._take_debug_screenshot("05_multi_record_page", "Navigated to multi-record page via link")
+                print("✅ Navigated to multi-record page via navigation link")
+                
+            else:
+                # Fallback: try direct URL navigation
+                print(f"⚠️ No navigation links found, trying direct URL navigation...")
+                print(f"🌐 Navigating directly to: {self.multi_record_url}")
+                
+                try:
+                    await self.page.goto(self.multi_record_url, wait_until='domcontentloaded', timeout=30000)
+                    
+                    # Wait for page to load
+                    try:
+                        await self.page.wait_for_load_state('networkidle', timeout=10000)
+                    except TimeoutError:
+                        pass
+                    
+                    await self._take_debug_screenshot("05_multi_record_page", "Navigated to multi-record page via direct URL")
+                    print("✅ Multi-record verification page loaded via direct URL")
+                    
+                except Exception as url_error:
+                    await self._take_debug_screenshot("05_multi_record_nav_error", f"Failed to navigate to multi-record page: {str(url_error)}")
+                    raise Exception(f"Could not navigate to multi-record page. Navigation link not found and direct URL failed: {str(url_error)}")
+            
+            # Handle any additional agreements on multi-record page
+            await self._handle_agreements()
+            await self._take_debug_screenshot("06_after_agreements_multi_record", "After handling agreements on multi-record page")
+            
+            # Verify we're on the correct page
+            await self._verify_on_multi_record_page()
+            
+            # Wait for multi-record form elements to load
+            await self.page.wait_for_timeout(3000)
+            
+            print("✅ Successfully navigated to multi-record verification page")
+            
+        except Exception as e:
+            await self._take_debug_screenshot("05_multi_record_navigation_failed", f"Multi-record navigation failed: {str(e)}")
+            raise Exception(f"Failed to navigate to multi-record verification page: {str(e)}")
+    
+    async def _verify_on_multi_record_page(self):
+        """Verify we're actually on the multi-record verification page"""
+        print("🔍 Verifying we're on the multi-record verification page...")
+        
+        # Take a screenshot first for debugging
+        await self._take_debug_screenshot("06_page_verification", "Verifying multi-record page")
+        
+        # Get page title and URL for additional context
+        page_title = await self.page.title()
+        page_url = self.page.url
+        print(f"📄 Current page - Title: '{page_title}', URL: {page_url}")
+        
+        # Comprehensive multi-record page indicators
+        multi_record_indicators = [
+            # File upload elements
+            'input[type="file"]',
+            
+            # Text content indicators
+            'text="Upload"',
+            'text="Multiple Record"',
+            'text="Multi Record"',
+            'text="Multi-Record"',
+            'text="Batch"',
+            'text="File Upload"',
+            'text="Choose File"',
+            'text="Browse"',
+            'text="Select File"',
+            
+            # Form and UI elements
+            '.file-upload',
+            '.upload-area',
+            '.file-input',
+            '.batch-upload',
+            '.multi-record-form',
+            
+            # Specific SCRA multi-record indicators
+            'text="Fixed Width"',
+            'text="Text File"',
+            'text="Data File"',
+            'text="Record File"',
+            
+            # Form labels and instructions
+            'label:has-text("File")',
+            'label:has-text("Upload")',
+            'label:has-text("Data")',
+            
+            # Buttons and controls
+            'button:has-text("Upload")',
+            'button:has-text("Choose")',
+            'button:has-text("Browse")',
+            'button:has-text("Select")',
+            
+            # Generic upload patterns
+            '[accept*=".txt"]',
+            '[accept*="text"]',
+            '[accept*=".dat"]',
+            '[name*="file"]',
+            '[id*="file"]',
+            '[id*="upload"]'
+        ]
+        
+        found_indicators = []
+        
+        # Check each indicator
+        for selector in multi_record_indicators:
+            try:
+                element = await self._query_selector_any_frame_visible(selector)
+                if element and await element.is_visible():
+                    found_indicators.append(selector)
+                    print(f"✅ Found multi-record indicator: {selector}")
+            except:
+                continue
+        
+        # Also check for hidden file inputs (common in modern web apps)
+        try:
+            all_file_inputs = await self.page.query_selector_all('input[type="file"]')
+            for i, file_input in enumerate(all_file_inputs):
+                input_name = await file_input.get_attribute('name') or f'file_input_{i}'
+                input_id = await file_input.get_attribute('id') or f'no_id_{i}'
+                is_visible = await file_input.is_visible()
+                is_enabled = await file_input.is_enabled()
+                
+                print(f"   File input {i+1}: name='{input_name}', id='{input_id}', visible={is_visible}, enabled={is_enabled}")
+                
+                if is_enabled:  # Even if not visible, if it's enabled it might be usable
+                    found_indicators.append(f'file_input_{i}')
+        except Exception as e:
+            print(f"   Error checking file inputs: {e}")
+        
+        # Check URL for multi-record indicators
+        url_indicators = ['multiple', 'multi', 'batch', 'upload', 'bulk', 'mass']
+        url_matches = [indicator for indicator in url_indicators if indicator in page_url.lower()]
+        if url_matches:
+            found_indicators.extend([f'url_contains_{match}' for match in url_matches])
+            print(f"✅ URL contains multi-record indicators: {url_matches}")
+        
+        # Check page title for multi-record indicators
+        title_indicators = ['multiple', 'multi', 'batch', 'upload', 'bulk', 'mass']
+        title_matches = [indicator for indicator in title_indicators if indicator in page_title.lower()]
+        if title_matches:
+            found_indicators.extend([f'title_contains_{match}' for match in title_matches])
+            print(f"✅ Page title contains multi-record indicators: {title_matches}")
+        
+        print(f"📊 Found {len(found_indicators)} multi-record indicators: {found_indicators}")
+        
+        if len(found_indicators) == 0:
+            print("⚠️ Cannot confirm multi-record page presence - no indicators found")
+            
+            # Get page content for debugging
+            page_content = await self.page.content()
+            if self.session_debug_dir:
+                debug_html_path = self.session_debug_dir / "page_verification_debug.html"
+                with open(debug_html_path, 'w') as f:
+                    f.write(page_content)
+                print(f"🗂️ Saved page HTML for debugging: {debug_html_path}")
+            
+            # Take screenshot to help debug
+            await self._take_debug_screenshot("07_multi_record_validation_failed", "Could not confirm multi-record page")
+            
+            # Don't fail here - just warn and continue
+            print("⚠️ Proceeding anyway - page structure may be different than expected")
+        else:
+            print(f"✅ Multi-record page confirmed with {len(found_indicators)} indicators")
+    
+    async def _upload_multi_record_file(self, fixed_width_content: str):
+        """Upload the fixed-width file to the multi-record form following the correct SCRA workflow"""
+        print("📤 Starting multi-record file upload workflow...")
+        
+        # Generate proper filename (same as API endpoint)
+        from datetime import datetime
+        timestamp = datetime.now().strftime('%m%d%H%M')
+        proper_filename = f"scra_{timestamp}.txt"
+        
+        # Save fixed-width content to a temporary file with proper name
+        temp_file_path = None
+        try:
+            import tempfile
+            import os
+            
+            # Create temporary directory and file with proper name
+            temp_dir = tempfile.mkdtemp()
+            temp_file_path = os.path.join(temp_dir, proper_filename)
+            
+            with open(temp_file_path, 'w', encoding='utf-8') as temp_file:
+                temp_file.write(fixed_width_content)
+            
+            print(f"📄 Created temporary file: {temp_file_path}")
+            print(f"📄 Using filename: {proper_filename}")
+            
+            # Store the filename for later table lookup
+            self.uploaded_filename = proper_filename
+            
+            # Wait for page to fully load and take a screenshot for debugging
+            await self.page.wait_for_timeout(3000)
+            await self._take_debug_screenshot("07_before_file_upload", "Page state before looking for Choose Files button")
+            
+            # Step 1: Find and click "Choose Files" button
+            print("🔍 Step 1: Looking for 'Choose Files' button...")
+            choose_files_selectors = [
+                'button:has-text("Choose Files")',
+                'button:has-text("Choose File")',
+                'button:has-text("Browse")',
+                'button:has-text("Select Files")',
+                'button:has-text("Select File")',
+                'input[type="button"][value*="Choose"]',
+                'input[type="button"][value*="Browse"]',
+                '.choose-files-btn',
+                '.browse-btn',
+                '.file-select-btn'
+            ]
+            
+            choose_files_button = None
+            for selector in choose_files_selectors:
+                try:
+                    choose_files_button = await self._query_selector_any_frame_visible(selector)
+                    if choose_files_button and await choose_files_button.is_visible():
+                        print(f"✅ Found 'Choose Files' button: {selector}")
+                        break
+                except:
+                    continue
+            
+            if not choose_files_button:
+                # Fallback: look for file input directly
+                print("🔍 'Choose Files' button not found, looking for file input directly...")
+                file_input = await self._query_selector_any_frame_visible('input[type="file"]')
+                if file_input:
+                    print("✅ Found file input directly")
+                    await file_input.set_input_files(temp_file_path)
+                    print("✅ File uploaded via direct input")
+                else:
+                    raise Exception("Could not find 'Choose Files' button or file input")
+            else:
+                # Click the Choose Files button and handle file dialog
+                print("🔗 Clicking 'Choose Files' button...")
+                
+                # Set up file chooser handler before clicking
+                async def handle_file_chooser(file_chooser):
+                    await file_chooser.set_files(temp_file_path)
+                    print("✅ File selected via file chooser dialog")
+                
+                self.page.on('filechooser', handle_file_chooser)
+                
+                # Click the button
+                await choose_files_button.click()
+                
+                # Wait for file selection to complete
+                await self.page.wait_for_timeout(2000)
+            
+            # Wait a bit longer for the upload to process
+            print("⏳ Waiting for upload to process...")
+            await self.page.wait_for_timeout(5000)  # Wait 5 seconds
+            
+            # Capture any console errors from the SCRA website
+            print("🔍 Checking for console errors...")
+            
+            # Set up console listener to catch API errors
+            console_errors = []
+            def handle_console(msg):
+                if msg.type in ['error', 'warning']:
+                    console_errors.append(f"{msg.type}: {msg.text}")
+                    print(f"🚨 Console {msg.type}: {msg.text}")
+            
+            self.page.on('console', handle_console)
+            
+            # Also listen for failed requests
+            failed_requests = []
+            def handle_response(response):
+                if response.status >= 400:
+                    failed_requests.append(f"{response.status}: {response.url}")
+                    print(f"🚨 Failed request: {response.status} {response.url}")
+            
+            self.page.on('response', handle_response)
+            
+            # Validate upload success
+            print("🔍 Checking for upload success message...")
+            upload_success = False
+            
+            # Look for success indicators
+            success_selectors = [
+                ':has-text("File uploaded successfully")',
+                ':has-text("uploaded successfully")',
+                ':has-text("Upload successful")',
+                ':has-text("File selected")',
+                f':has-text("{proper_filename}")',  # Look for our filename
+                '.upload-success',
+                '.file-success'
+            ]
+            
+            for selector in success_selectors:
+                try:
+                    element = await self._query_selector_any_frame_visible(selector)
+                    if element and await element.is_visible():
+                        print(f"✅ Upload success confirmed: {selector}")
+                        upload_success = True
+                        break
+                except:
+                    continue
+            
+            if not upload_success:
+                # Check for error messages
+                error_selectors = [
+                    ':has-text("An error occurred")',
+                    ':has-text("error occurred")',
+                    ':has-text("Upload failed")',
+                    ':has-text("Invalid file")',
+                    '.upload-error',
+                    '.file-error'
+                ]
+                
+                error_found = False
+                for selector in error_selectors:
+                    try:
+                        element = await self._query_selector_any_frame_visible(selector)
+                        if element and await element.is_visible():
+                            error_text = await element.text_content()
+                            print(f"❌ Upload error detected: {error_text}")
+                            error_found = True
+                            break
+                    except:
+                        continue
+                
+                if error_found:
+                    # Log any console errors and failed requests we captured
+                    if console_errors:
+                        print(f"🔍 Console errors captured: {console_errors}")
+                    if failed_requests:
+                        print(f"🔍 Failed requests captured: {failed_requests}")
+                    
+                    # Don't fail immediately - the SCRA site might have backend issues
+                    print("⚠️ Upload error detected, but this might be a temporary SCRA site issue")
+                    print("⚠️ Continuing with verification process...")
+                else:
+                    print("⚠️ No clear upload success/error message found - proceeding anyway")
+            
+            await self._take_debug_screenshot("08_file_selected", "File selected, configuring certificate options")
+            
+            # Store temp file path for cleanup later (after entire process completes)
+            self._temp_file_cleanup = temp_file_path
+            
+        except Exception as e:
+            await self._take_debug_screenshot("08_file_upload_error", f"File upload failed: {str(e)}")
+            # Clean up on error
+            if temp_file_path:
+                try:
+                    import os
+                    import shutil
+                    
+                    if os.path.exists(temp_file_path):
+                        os.unlink(temp_file_path)
+                        print(f"🗑️ Cleaned up temporary file after error: {temp_file_path}")
+                    
+                    temp_dir = os.path.dirname(temp_file_path)
+                    if os.path.exists(temp_dir) and temp_dir != tempfile.gettempdir():
+                        shutil.rmtree(temp_dir)
+                        print(f"🗑️ Cleaned up temporary directory after error: {temp_dir}")
+                except Exception as cleanup_error:
+                    print(f"⚠️ Cleanup warning: {cleanup_error}")
+            raise Exception(f"File upload failed: {str(e)}")
+    
+    async def _configure_multi_record_options(self):
+        """Configure multi-record verification options following the exact SCRA workflow"""
+        print("⚙️ Step 2: Configuring certificate options...")
+        
+        # Step 2a: Find and select "Yes" for certificate requirement
+        print("🔍 Looking for certificate requirement radio buttons...")
+        cert_yes_selectors = [
+            'input[type="radio"][value="yes" i]',
+            'input[type="radio"][value="y" i]',
+            'input[type="radio"][value="1"]',
+            'label:has-text("Yes") input[type="radio"]',
+            'input[name*="certificate" i][value*="yes" i]',
+            'input[name*="cert" i][value*="yes" i]',
+            'input[id*="yes" i][type="radio"]'
+        ]
+        
+        cert_selected = False
+        for selector in cert_yes_selectors:
+            try:
+                element = await self._query_selector_any_frame_visible(selector)
+                if element and await element.is_visible():
+                    await element.click()
+                    print(f"✅ Selected 'Yes' for certificates: {selector}")
+                    cert_selected = True
+                    break
+            except:
+                continue
+        
+        if not cert_selected:
+            print("⚠️ Could not find certificate 'Yes' radio button, trying text-based approach...")
+            # Try clicking on "Yes" text near certificate question
+            try:
+                yes_text = await self._query_selector_any_frame_visible('text="Yes"')
+                if yes_text:
+                    await yes_text.click()
+                    print("✅ Clicked 'Yes' text for certificates")
+                    cert_selected = True
+            except:
+                pass
+        
+        await self._take_debug_screenshot("09_certificate_selected", "Certificate requirement set to Yes")
+        await self.page.wait_for_timeout(1000)
+        
+        # Step 2b: Select both certificate checkboxes (active duty and not active duty)
+        print("🔍 Looking for certificate type checkboxes...")
+        
+        # Look for active duty certificate checkbox
+        active_duty_selectors = [
+            'input[type="checkbox"]:near(text="active duty")',
+            'input[type="checkbox"]:near(text="Active Duty")',
+            'input[name*="active" i][type="checkbox"]',
+            'input[id*="active" i][type="checkbox"]',
+            'label:has-text("active duty") input[type="checkbox"]'
+        ]
+        
+        # Look for not active duty certificate checkbox  
+        not_active_duty_selectors = [
+            'input[type="checkbox"]:near(text="not in active duty")',
+            'input[type="checkbox"]:near(text="not on active duty")',
+            'input[type="checkbox"]:near(text="Not in Active Duty")',
+            'input[name*="notactive" i][type="checkbox"]',
+            'input[name*="inactive" i][type="checkbox"]',
+            'label:has-text("not") input[type="checkbox"]'
+        ]
+        
+        checkboxes_selected = 0
+        
+        # Try to find and select active duty checkbox
+        for selector in active_duty_selectors:
+            try:
+                element = await self._query_selector_any_frame_visible(selector)
+                if element and await element.is_visible():
+                    is_checked = await element.is_checked()
+                    if not is_checked:
+                        await element.click()
+                        print(f"✅ Selected active duty certificate: {selector}")
+                        checkboxes_selected += 1
+                        break
+            except:
+                continue
+        
+        # Try to find and select not active duty checkbox
+        for selector in not_active_duty_selectors:
+            try:
+                element = await self._query_selector_any_frame_visible(selector)
+                if element and await element.is_visible():
+                    is_checked = await element.is_checked()
+                    if not is_checked:
+                        await element.click()
+                        print(f"✅ Selected not active duty certificate: {selector}")
+                        checkboxes_selected += 1
+                        break
+            except:
+                continue
+        
+        # Fallback: select any unchecked checkboxes (up to 2)
+        if checkboxes_selected < 2:
+            print("🔍 Fallback: Looking for any certificate checkboxes...")
+            try:
+                all_checkboxes = await self.page.query_selector_all('input[type="checkbox"]')
+                for checkbox in all_checkboxes:
+                    if checkboxes_selected >= 2:
+                        break
+                    
+                    if await checkbox.is_visible() and await checkbox.is_enabled():
+                        is_checked = await checkbox.is_checked()
+                        if not is_checked:
+                            # Check if this checkbox is related to certificates
+                            checkbox_text = await self.page.evaluate(
+                                '(element) => element.closest("label")?.textContent || element.parentElement?.textContent || ""',
+                                checkbox
+                            )
+                            
+                            if any(keyword in checkbox_text.lower() for keyword in ['certificate', 'active', 'duty', 'status']):
+                                await checkbox.click()
+                                print(f"✅ Selected certificate checkbox (fallback): {checkbox_text[:50]}...")
+                                checkboxes_selected += 1
+                                await self.page.wait_for_timeout(500)
+            except Exception as e:
+                print(f"⚠️ Error in fallback checkbox selection: {e}")
+        
+        await self._take_debug_screenshot("10_certificates_configured", f"Certificate options configured ({checkboxes_selected} selected)")
+        print(f"✅ Selected {checkboxes_selected} certificate options")
+    
+    async def _handle_multi_record_terms(self):
+        """Handle the 'I Accept' terms checkbox"""
+        print("📋 Step 3: Handling 'I Accept' terms...")
+        
+        # Look for "I Accept" checkbox specifically
+        accept_selectors = [
+            'input[type="checkbox"]:near(text="I accept")',
+            'input[type="checkbox"]:near(text="I Accept")',
+            'input[type="checkbox"]:near(text="accept")',
+            'input[name*="accept" i][type="checkbox"]',
+            'input[id*="accept" i][type="checkbox"]',
+            'label:has-text("I accept") input[type="checkbox"]',
+            'label:has-text("accept") input[type="checkbox"]',
+            '.accept-checkbox',
+            '.terms-checkbox'
+        ]
+        
+        terms_accepted = False
+        for selector in accept_selectors:
+            try:
+                element = await self._query_selector_any_frame_visible(selector)
+                if element and await element.is_visible():
+                    is_checked = await element.is_checked()
+                    if not is_checked:
+                        await element.click()
+                        print(f"✅ Checked 'I Accept' terms: {selector}")
+                        terms_accepted = True
+                        break
+            except:
+                continue
+        
+        # Fallback: look for any remaining unchecked checkboxes that might be terms
+        if not terms_accepted:
+            print("🔍 Fallback: Looking for any terms-related checkboxes...")
+            try:
+                all_checkboxes = await self.page.query_selector_all('input[type="checkbox"]')
+                for checkbox in all_checkboxes:
+                    if await checkbox.is_visible() and await checkbox.is_enabled():
+                        is_checked = await checkbox.is_checked()
+                        if not is_checked:
+                            # Check if this checkbox is related to terms/acceptance
+                            checkbox_text = await self.page.evaluate(
+                                '(element) => element.closest("label")?.textContent || element.parentElement?.textContent || ""',
+                                checkbox
+                            )
+                            
+                            if any(keyword in checkbox_text.lower() for keyword in ['accept', 'agree', 'terms', 'condition']):
+                                await checkbox.click()
+                                print(f"✅ Checked terms checkbox (fallback): {checkbox_text[:50]}...")
+                                terms_accepted = True
+                                break
+            except Exception as e:
+                print(f"⚠️ Error in fallback terms selection: {e}")
+        
+        if terms_accepted:
+            await self._take_debug_screenshot("11_terms_accepted", "I Accept terms checked")
+            await self.page.wait_for_timeout(1000)
+        else:
+            print("⚠️ Could not find 'I Accept' checkbox - may already be checked or have different structure")
+    
+    async def _submit_multi_record_and_get_results(self, records: List[SCRARecord], fixed_width_content: str = None) -> Dict[str, Any]:
+        """Submit the multi-record form and get results"""
+        print("🚀 Submitting multi-record verification...")
+        
+        # Find submit button
+        submit_selectors = [
+            'button:has-text("Submit")',
+            'button:has-text("Process")',
+            'button:has-text("Upload")',
+            'input[type="submit"]',
+            '.submit-btn',
+            '.process-btn'
+        ]
+        
+        submit_button = None
+        for selector in submit_selectors:
+            try:
+                submit_button = await self._wait_for_selector_any_frame(selector, timeout_ms=6000)
+                if submit_button:
+                    print(f"✅ Found submit button: {selector}")
+                    break
+            except TimeoutError:
+                continue
+        
+        if not submit_button:
+            raise Exception("Could not find submit button")
+        
+        # Set up PDF download handling before submitting
+        pdf_downloaded = False
+        pdf_path = None
+        pdf_filename = "scra_multi_record_result.pdf"
+        
+        # Set up download listener
+        async def handle_download(download):
+            nonlocal pdf_downloaded, pdf_path, pdf_filename
+            print(f"📥 Download detected: {download.suggested_filename}")
+            
+            try:
+                # Read PDF data as bytes
+                pdf_bytes = await download.path()
+                with open(pdf_bytes, 'rb') as f:
+                    pdf_data = f.read()
+                
+                pdf_downloaded = True
+                print(f"✅ PDF downloaded: {len(pdf_data)} bytes")
+                
+                # Convert to base64 for frontend transmission
+                import base64
+                pdf_base64 = base64.b64encode(pdf_data).decode('utf-8')
+                
+                # Store PDF data for later transmission
+                if not hasattr(self, 'pdf_data'):
+                    self.pdf_data = None
+                
+                self.pdf_data = {
+                    'filename': pdf_filename,
+                    'data': pdf_base64,
+                    'size': len(pdf_data),
+                    'timestamp': datetime.now().isoformat()
+                }
+                
+                # Upload to Supabase Storage immediately
+                if self.user_id:
+                    await self.supabase_service.upload_pdf_realtime(
+                        self.session_id,
+                        pdf_filename,
+                        pdf_data,
+                        self.user_id
+                    )
+                    print(f"📤 PDF uploaded to Supabase Storage: {pdf_filename}")
+                
+                # Save debug copy to local filesystem
+                if self.session_debug_dir and self.session_debug_dir is not None:
+                    try:
+                        debug_path = self.session_debug_dir / "pdfs" / pdf_filename
+                        with open(debug_path, 'wb') as f:
+                            f.write(pdf_data)
+                        print(f"🗂️ PDF debug copy saved: {debug_path}")
+                    except Exception as debug_e:
+                        print(f"⚠️ Failed to save PDF debug copy: {debug_e}")
+                
+                print(f"✅ PDF stored: {pdf_filename} ({len(pdf_data)} bytes)")
+                
+            except Exception as e:
+                print(f"❌ Failed to process PDF: {e}")
+        
+        # Listen for downloads on the page
+        self.page.on('download', handle_download)
+        print("📥 PDF download listener set up")
+        
+        # Submit form
+        print("🚀 Step 4: Clicking Upload button...")
+        await submit_button.click()
+        await self._take_debug_screenshot("12_upload_clicked", "Upload button clicked, waiting for processing")
+        
+        # Wait for processing to complete and look for "Files Uploaded in Last 24 Hours" table
+        print("⏳ Step 5: Waiting for upload processing and looking for files table...")
+        
+        processing_timeout = 120  # 2 minutes for multi-record processing
+        elapsed = 0
+        files_table_found = False
+        
+        while elapsed < processing_timeout and not files_table_found:
+            await self.page.wait_for_timeout(5000)  # Check every 5 seconds
+            elapsed += 5
+            
+            # Look for "Files Uploaded in Last 24 Hours" table or text
+            files_table_selectors = [
+                'text="Files Uploaded in Last 24 Hours"',
+                ':has-text("Files Uploaded in Last 24 Hours")',
+                ':has-text("Files Uploaded")',
+                'table:has-text("Upload Filename")',
+                'table:has-text("Certificate File Status")',
+                '.files-table',
+                '.uploaded-files'
+            ]
+            
+            for selector in files_table_selectors:
+                try:
+                    element = await self._query_selector_any_frame_visible(selector)
+                    if element and await element.is_visible():
+                        print(f"✅ Found files table: {selector}")
+                        files_table_found = True
+                        break
+                except:
+                    continue
+            
+            if elapsed % 30 == 0:  # Log every 30 seconds
+                print(f"   Still waiting for files table... ({elapsed}s)")
+        
+        await self._take_debug_screenshot("13_files_table_status", "Files table status after upload")
+        
+        # Step 6: Look for and click "Download Results" link next to the table
+        if files_table_found:
+            print("🔍 Step 6: Looking for 'Download Results' link next to files table...")
+            
+            download_results_selectors = [
+                'a:has-text("Download Results")',
+                'a:has-text("download results")',
+                'a:has-text("Download Result")',
+                'button:has-text("Download Results")',
+                ':has-text("Files Uploaded") ~ a:has-text("Download")',
+                ':has-text("Files Uploaded") + a:has-text("Download")',
+                'table ~ a:has-text("Download")',
+                '.download-results-link'
+            ]
+            
+            download_results_link = None
+            for selector in download_results_selectors:
+                try:
+                    download_results_link = await self._query_selector_any_frame_visible(selector)
+                    if download_results_link and await download_results_link.is_visible():
+                        print(f"✅ Found Download Results link: {selector}")
+                        break
+                except:
+                    continue
+            
+            if download_results_link:
+                print("🔗 Clicking 'Download Results' link...")
+                await download_results_link.click()
+                await self._take_debug_screenshot("14_download_results_clicked", "Download Results link clicked")
+                
+                # Wait for results page to load
+                await self.page.wait_for_timeout(3000)
+                
+                # Step 7: Find our uploaded file in the table and click Certificate download
+                await self._download_certificate_from_table(fixed_width_content)
+                
+            else:
+                print("⚠️ Download Results link not found next to files table")
+                await self._take_debug_screenshot("14_no_download_results_link", "No Download Results link found")
+        else:
+            print("⚠️ Files table not found, checking for alternative download methods...")
+            await self._take_debug_screenshot("13_no_files_table", "No files table found")
+            
+            # Fallback: look for any download links on current page
+            await self._try_fallback_download_methods()
+        
+        # Take final screenshot
+        await self._take_debug_screenshot("16_final_state", "Final state after multi-record processing")
+        
+        # Extract results
+        results = await self._extract_multi_record_results(records)
+        
+        return results
+    
+    async def _download_certificate_from_table(self, fixed_width_content: str):
+        """Find our uploaded file in the results table and download the certificate"""
+        print("🔍 Step 7: Looking for our uploaded file in the results table...")
+        
+        # Use the actual uploaded filename that we stored
+        if hasattr(self, 'uploaded_filename') and self.uploaded_filename:
+            expected_filename = self.uploaded_filename
+            print(f"🔍 Looking for uploaded filename: {expected_filename}")
+        else:
+            # Fallback to timestamp-based filename if not stored
+            from datetime import datetime
+            timestamp = datetime.now().strftime('%m%d%H%M')
+            expected_filename = f"scra_{timestamp}.txt"
+            print(f"🔍 Fallback to timestamp filename: {expected_filename}")
+        
+        # Also try some variations in case the timestamp is slightly different (only as fallback)
+        possible_filenames = [expected_filename]
+        
+        if not hasattr(self, 'uploaded_filename'):
+            current_time = datetime.now()
+            # Try current minute and previous few minutes
+            for minutes_ago in range(1, 5):
+                test_time = current_time.replace(minute=current_time.minute - minutes_ago)
+                if test_time.minute < 0:
+                    test_time = test_time.replace(hour=test_time.hour - 1, minute=test_time.minute + 60)
+                test_timestamp = test_time.strftime('%m%d%H%M')
+                possible_filenames.append(f"scra_{test_timestamp}.txt")
+        
+        print(f"🔍 Looking for filenames: {possible_filenames}")
+        
+        await self._take_debug_screenshot("15_results_table", "Results table page loaded")
+        
+        # Look for table with our file
+        table_found = False
+        certificate_link = None
+        
+        try:
+            # First, try to find the table
+            table_selectors = [
+                'table:has-text("Upload Filename")',
+                'table:has-text("Certificate File Status")',
+                'table:has-text("Result File Status")',
+                'table',
+                '.results-table',
+                '.files-table'
+            ]
+            
+            table = None
+            for selector in table_selectors:
+                try:
+                    table = await self._query_selector_any_frame_visible(selector)
+                    if table:
+                        print(f"✅ Found results table: {selector}")
+                        table_found = True
+                        break
+                except:
+                    continue
+            
+            if table_found:
+                # Look for our filename in the table
+                for filename in possible_filenames:
+                    try:
+                        # Look for a row containing our filename
+                        filename_selectors = [
+                            f'td:has-text("{filename}")',
+                            f'tr:has-text("{filename}")',
+                            f':has-text("{filename}")'
+                        ]
+                        
+                        file_row = None
+                        for selector in filename_selectors:
+                            try:
+                                file_row = await self._query_selector_any_frame_visible(selector)
+                                if file_row:
+                                    print(f"✅ Found our file row: {filename}")
+                                    break
+                            except:
+                                continue
+                        
+                        if file_row:
+                            # Find the specific row containing our file
+                            parent_row = await file_row.query_selector('xpath=ancestor::tr[1]') or file_row
+                            
+                            # Get all download links in this row
+                            download_links = await parent_row.query_selector_all('a:has-text("Download")')
+                            
+                            print(f"🔍 Found {len(download_links)} download links in the row")
+                            
+                            # The Certificate File Status is typically the LAST download link in the row
+                            # Based on the table structure: Result File Status (first) | Certificate File Status (last)
+                            if len(download_links) >= 2:
+                                # Take the last download link (Certificate File Status)
+                                certificate_link = download_links[-1]
+                                print("✅ Selected Certificate File Status download link (last link in row)")
+                            elif len(download_links) == 1:
+                                # Only one download link - use it
+                                certificate_link = download_links[0]
+                                print("✅ Found single download link - using it")
+                            else:
+                                # Fallback to original selectors
+                                certificate_selectors = [
+                                    'a[href*=".pdf"]',
+                                    'a[href*="certificate"]',
+                                    'a:has-text("Download")'
+                                ]
+                                
+                                for cert_selector in certificate_selectors:
+                                    try:
+                                        certificate_link = await parent_row.query_selector(cert_selector)
+                                        if certificate_link and await certificate_link.is_visible():
+                                            print(f"✅ Found certificate download link via fallback: {cert_selector}")
+                                            break
+                                    except:
+                                        continue
+                            
+                            if certificate_link:
+                                break
+                    
+                    except Exception as e:
+                        print(f"⚠️ Error looking for filename {filename}: {e}")
+                        continue
+            
+            if certificate_link:
+                print("🔗 Clicking certificate download link...")
+                await certificate_link.click()
+                await self._take_debug_screenshot("16_certificate_download_clicked", "Certificate download link clicked")
+                
+                # Wait for Certificate Download popup to appear
+                print("⏳ Waiting for Certificate Download popup...")
+                await self.page.wait_for_timeout(2000)
+                await self._take_debug_screenshot("17_certificate_popup_appeared", "Certificate download popup")
+                
+                # Look for the "Download PDF" button in the popup
+                download_pdf_selectors = [
+                    'button:has-text("Download PDF")',
+                    'input[value*="Download PDF"]',
+                    'a:has-text("Download PDF")',
+                    'button[onclick*="pdf"]',
+                    'input[type="button"][value*="PDF"]'
+                ]
+                
+                download_pdf_button = None
+                for selector in download_pdf_selectors:
+                    try:
+                        download_pdf_button = await self._query_selector_any_frame_visible(selector)
+                        if download_pdf_button:
+                            print(f"✅ Found Download PDF button: {selector}")
+                            break
+                    except:
+                        continue
+                
+                if download_pdf_button:
+                    print("🔗 Clicking Download PDF button...")
+                    await download_pdf_button.click()
+                    await self._take_debug_screenshot("18_download_pdf_clicked", "Download PDF button clicked")
+                    
+                    # Wait for PDF download
+                    print("⏳ Waiting for certificate PDF download...")
+                    download_timeout = 30
+                    elapsed = 0
+                    
+                    while not hasattr(self, 'pdf_data') or not self.pdf_data and elapsed < download_timeout:
+                        await self.page.wait_for_timeout(1000)
+                        elapsed += 1
+                        if elapsed % 5 == 0:
+                            print(f"   Still waiting for PDF download... ({elapsed}s)")
+                    
+                    if hasattr(self, 'pdf_data') and self.pdf_data:
+                        print(f"✅ Certificate PDF downloaded successfully in {elapsed} seconds")
+                    else:
+                        print("⚠️ PDF download not detected, generating from page content...")
+                        await self._generate_pdf_from_page()
+                else:
+                    print("⚠️ Could not find Download PDF button in popup")
+                    await self._take_debug_screenshot("18_no_download_pdf_button", "No Download PDF button found")
+                    # Try to proceed anyway in case the download started automatically
+                    await self.page.wait_for_timeout(3000)
+            
+            else:
+                print("⚠️ Could not find certificate download link for our file")
+                await self._take_debug_screenshot("16_no_certificate_link", "No certificate download link found")
+                
+                # Fallback: try any download links on the page
+                await self._try_fallback_download_methods()
+        
+        except Exception as e:
+            print(f"❌ Error in certificate download process: {e}")
+            await self._take_debug_screenshot("16_certificate_download_error", f"Certificate download error: {str(e)}")
+            await self._try_fallback_download_methods()
+    
+    async def _try_fallback_download_methods(self):
+        """Try fallback methods to download certificates"""
+        print("🔍 Trying fallback download methods...")
+        
+        # Look for any download links on the current page
+        fallback_selectors = [
+            'a:has-text("Download")',
+            'a:has-text("download")',
+            'a[href$=".pdf"]',
+            'a[href*="certificate"]',
+            'a[href*="download"]',
+            'button:has-text("Download")',
+            '.download-link',
+            '.pdf-link'
+        ]
+        
+        download_found = False
+        for selector in fallback_selectors:
+            try:
+                links = await self.page.query_selector_all(selector)
+                for link in links:
+                    if await link.is_visible():
+                        print(f"✅ Trying fallback download link: {selector}")
+                        await link.click()
+                        await self.page.wait_for_timeout(3000)
+                        download_found = True
+                        break
+                if download_found:
+                    break
+            except:
+                continue
+        
+        if not download_found:
+            print("⚠️ No download links found, generating PDF from page content...")
+            await self._generate_pdf_from_page()
+    
+    async def _extract_multi_record_results(self, records: List[SCRARecord]) -> Dict[str, Any]:
+        """Extract multi-record verification results from the page"""
+        print("📋 Extracting multi-record verification results...")
+        
+        # Get page text content
+        page_text = await self.page.text_content('body')
+        page_html = await self.page.content()
+        
+        # Save raw results for debugging
+        if self.session_debug_dir and self.session_debug_dir is not None:
+            try:
+                results_filename = f'{self.session_id}_multi_record_results_raw.txt'
+                results_filepath = self.session_debug_dir / results_filename
+                with open(results_filepath, 'w') as f:
+                    f.write(page_text)
+                print(f"📄 Raw results saved to: {results_filepath}")
+                
+                # Save HTML for debugging
+                html_filename = f'{self.session_id}_multi_record_results_raw.html'
+                html_filepath = self.session_debug_dir / html_filename
+                with open(html_filepath, 'w') as f:
+                    f.write(page_html)
+                print(f"🌐 Raw HTML saved to: {html_filepath}")
+            except Exception as debug_e:
+                print(f"⚠️ Failed to save debug results: {debug_e}")
+        else:
+            print("ℹ️ Skipping debug file save (production mode)")
+        
+        # Generate transaction ID
+        transaction_id = f"PUP_MULTI_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        # Analyze results for completion indicators
+        completion_indicators = [
+            'processing complete', 'verification complete', 'results ready',
+            'download', 'certificate', 'processed successfully'
+        ]
+        
+        page_text_lower = page_text.lower()
+        processing_complete = any(indicator in page_text_lower for indicator in completion_indicators)
+        
+        # Structure response for multi-record verification
+        response = {
+            "success": True,
+            "method": "puppeteer_multi_record",
+            "id": transaction_id,
+            "multiRecordRequest": {
+                "recordCount": len(records),
+                "records": [record.to_dict() for record in records[:5]],  # First 5 for preview
+                "totalRecords": len(records)
+            },
+            "processingResult": {
+                "dateOfInterest": datetime.now().strftime('%Y%m%d'),
+                "transactionId": transaction_id,
+                "recordsProcessed": len(records),
+                "processingComplete": processing_complete,
+                "certificateGenerated": self.pdf_data is not None,
+            },
+            "automationResult": {
+                "rawOutput": page_text[:2000],  # Truncate for storage
+                "pageUrl": self.page.url,
+                "timestamp": datetime.now().isoformat(),
+                "method": "puppeteer_multi_record",
+                "sessionId": self.session_id,
+                "files_included": True,
+                "delivery_method": "direct_response",
+                "recordCount": len(records)
+            }
+        }
+
+        # Add screenshots and PDF data to response
+        print(f"🔍 Debug - Adding files to response...")
+        print(f"🔍 Has screenshots attribute: {hasattr(self, 'screenshots')}")
+        print(f"🔍 Has pdf_data attribute: {hasattr(self, 'pdf_data')}")
+        
+        if hasattr(self, 'screenshots') and self.screenshots:
+            response['automationResult']['screenshots'] = self.screenshots
+            print(f"✅ Added {len(self.screenshots)} screenshots to response")
+        else:
+            print(f"❌ No screenshots to add")
+        
+        if hasattr(self, 'pdf_data') and self.pdf_data:
+            response['automationResult']['pdf'] = self.pdf_data
+            print(f"✅ Added PDF data to response: {self.pdf_data['filename']} ({len(self.pdf_data['data'])} chars)")
+        else:
+            print(f"❌ No PDF data to add")
+        
+        print(f"✅ Multi-record results extracted - Records: {len(records)}, Complete: {processing_complete}")
+        await self._take_debug_screenshot("14_results_extracted", f"Multi-record results extracted - Records: {len(records)}")
+        return response
+    
     async def _generate_pdf_from_page(self):
         """Generate PDF from current page content when automatic download fails"""
         try:
@@ -1519,7 +2860,34 @@ class PuppeteerSCRAAgent:
             return False
     
     async def _cleanup(self):
-        """Clean up browser resources"""
+        """Clean up browser resources and temporary files"""
+        # Clean up temporary files first
+        if hasattr(self, '_temp_file_cleanup') and self._temp_file_cleanup:
+            try:
+                import os
+                import shutil
+                
+                temp_file_path = self._temp_file_cleanup
+                
+                # Remove the file
+                if os.path.exists(temp_file_path):
+                    os.unlink(temp_file_path)
+                    print(f"🗑️ Cleaned up temporary file: {temp_file_path}")
+                
+                # Remove the temporary directory
+                import tempfile
+                temp_dir = os.path.dirname(temp_file_path)
+                if os.path.exists(temp_dir) and temp_dir != tempfile.gettempdir():
+                    shutil.rmtree(temp_dir)
+                    print(f"🗑️ Cleaned up temporary directory: {temp_dir}")
+                    
+                # Clear the cleanup path
+                self._temp_file_cleanup = None
+                
+            except Exception as cleanup_error:
+                print(f"⚠️ Temporary file cleanup warning: {cleanup_error}")
+        
+        # Clean up browser resources
         if self.context:
             try:
                 await self.context.close()

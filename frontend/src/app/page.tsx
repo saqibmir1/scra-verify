@@ -530,12 +530,25 @@ export default function Home() {
           onCredentialsSaved={() => loadCredentials()}
         />
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">
-            New SCRA Verification
-          </h1>
-          <p className="text-gray-600">
-            Enter service member information to verify active duty status
-          </p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900 mb-2">
+                New SCRA Verification
+              </h1>
+              <p className="text-gray-600">
+                Enter service member information to verify active duty status
+              </p>
+            </div>
+            <a
+              href="/multi-record"
+              className="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors"
+            >
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Multi-Record CSV
+            </a>
+          </div>
         </div>
 
 
@@ -861,40 +874,49 @@ export default function Home() {
                           </svg>
                           Verification Screenshots ({result.data.automationResult.screenshots.length})
                         </h4>
-                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
                           {result.data.automationResult.screenshots.map((screenshot, index) => (
-                            <div key={index} className="group relative">
-                              <div className="aspect-w-3 aspect-h-2 bg-gray-100 rounded-lg overflow-hidden border">
-                                <Image
-                                  src={`data:image/png;base64,${screenshot.data}`}
-                                  alt={screenshot.description || `Step ${screenshot.step}`}
-                                  width={300}
-                                  height={200}
-                                  className="w-full h-32 object-cover cursor-pointer hover:opacity-90 transition-opacity"
-                                  onClick={() => {
-                                    // Open in new window for full view
-                                    const newWindow = window.open();
-                                    if (newWindow) {
-                                      newWindow.document.write(`
-                                        <html>
-                                          <head><title>${screenshot.filename}</title></head>
-                                          <body style="margin:0;background:black;display:flex;justify-content:center;align-items:center;min-height:100vh;">
-                                            <img src="data:image/png;base64,${screenshot.data}" style="max-width:100%;max-height:100%;object-fit:contain;" alt="${screenshot.description}" />
-                                          </body>
-                                        </html>
-                                      `);
-                                    }
-                                  }}
-                                />
-                                <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-200 flex items-center justify-center">
-                                  <svg className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
-                                  </svg>
+                            <div key={index} className="group">
+                              <div className="relative bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow duration-200">
+                                {/* Step indicator */}
+                                <div className="absolute top-2 left-2 bg-blue-600 text-white text-xs px-2 py-1 rounded-md font-medium z-10">
+                                  Step {index + 1}
                                 </div>
-                              </div>
-                              <div className="mt-2 text-xs text-gray-600 truncate">
-                                <div className="font-medium">{screenshot.filename}</div>
-                                <div className="text-gray-500">{screenshot.description}</div>
+                                
+                                {/* Image container */}
+                                <div className="aspect-[4/3] bg-gray-50">
+                                  <Image
+                                    src={`data:image/png;base64,${screenshot.data}`}
+                                    alt={screenshot.description || `Step ${screenshot.step}`}
+                                    width={400}
+                                    height={300}
+                                    className="w-full h-full object-contain cursor-pointer hover:scale-105 transition-transform duration-200"
+                                    onClick={() => {
+                                      // Open in new window for full view
+                                      const newWindow = window.open();
+                                      if (newWindow) {
+                                        newWindow.document.write(`
+                                          <html>
+                                            <head><title>${screenshot.filename}</title></head>
+                                            <body style="margin:0;background:#1f2937;display:flex;justify-content:center;align-items:center;min-height:100vh;">
+                                              <img src="data:image/png;base64,${screenshot.data}" style="max-width:95%;max-height:95%;object-fit:contain;border-radius:8px;" alt="${screenshot.description}" />
+                                            </body>
+                                          </html>
+                                        `);
+                                      }
+                                    }}
+                                  />
+                                </div>
+                                
+                                {/* Info panel */}
+                                <div className="p-3 bg-white">
+                                  <div className="text-sm font-medium text-gray-900 truncate mb-1">
+                                    {screenshot.filename.replace('.png', '').replace(/_/g, ' ')}
+                                  </div>
+                                  <div className="text-xs text-gray-500 line-clamp-2">
+                                    {screenshot.description}
+                                  </div>
+                                </div>
                               </div>
                             </div>
                           ))}

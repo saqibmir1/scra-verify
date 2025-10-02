@@ -12,6 +12,35 @@ export interface VerificationRequest {
   activeDutyDate: string;
 }
 
+export interface MultiRecordRequest {
+  fixed_width_content: string;
+}
+
+export interface CSVConversionResult {
+  success: boolean;
+  validation_errors?: string[];
+  error_count?: number;
+  fixed_width_content?: string;
+  record_count?: number;
+}
+
+export interface CSVValidationResult {
+  valid: boolean;
+  record_count: number;
+  error_count: number;
+  errors: string[];
+  records: Array<{
+    ssn: string;
+    firstName: string;
+    lastName: string;
+    middleName?: string;
+    dateOfBirth?: string;
+    activeDutyDate: string;
+    customerRecordId?: string;
+  }>;
+  total_records: number;
+}
+
 export interface VerificationResponse {
   success: boolean;
   sessionId?: string;
@@ -44,6 +73,7 @@ export interface VerificationResponse {
         data: string; // base64
         size: number;
       };
+      recordCount?: number; // For multi-record
     };
     eligibility?: {
       activeDutyCovered: boolean;
@@ -51,8 +81,27 @@ export interface VerificationResponse {
       matchReasonCode: string;
       covered: boolean;
     };
+    processingResult?: {
+      recordsProcessed: number;
+      processingComplete: boolean;
+      certificateGenerated: boolean;
+    };
+    multiRecordRequest?: {
+      recordCount: number;
+      totalRecords: number;
+      records: Array<{
+        ssn: string;
+        firstName: string;
+        lastName: string;
+        middleName?: string;
+        dateOfBirth?: string;
+        activeDutyDate: string;
+        customerRecordId?: string;
+      }>;
+    };
   };
   error?: string;
+  validation_errors?: string[];
 }
 
 export interface SessionStatus {
@@ -102,6 +151,78 @@ class BackendAPI {
 
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  async convertCSVToFixedWidth(file: File): Promise<CSVConversionResult> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${this.baseUrl}/csv-to-fixed-width`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      
+      // If it's a validation error response, return it properly
+      if (errorData.validation_errors) {
+        return {
+          success: false,
+          validation_errors: errorData.validation_errors,
+          error_count: errorData.error_count || errorData.validation_errors.length
+        };
+      }
+      
+      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+    }
+
+    // Check if response is JSON (validation errors) or text (fixed-width content)
+    const contentType = response.headers.get('content-type');
+    
+    if (contentType?.includes('application/json')) {
+      // Validation errors
+      const errorData = await response.json();
+      return {
+        success: false,
+        validation_errors: errorData.validation_errors,
+        error_count: errorData.error_count
+      };
+    } else {
+      // Success - fixed-width content
+      const fixedWidthContent = await response.text();
+      const recordCount = parseInt(response.headers.get('x-record-count') || '0');
+      
+      return {
+        success: true,
+        fixed_width_content: fixedWidthContent,
+        record_count: recordCount
+      };
+    }
+  }
+
+  async verifyMultipleRecords(data: MultiRecordRequest, userId?: string): Promise<VerificationResponse> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    
+    // Add user ID for real-time tracking if available
+    if (userId) {
+      headers['x-user-id'] = userId;
+    }
+    
+    const response = await fetch(`${this.baseUrl}/multi-record-verify`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(data)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
     }
 
     return response.json();
