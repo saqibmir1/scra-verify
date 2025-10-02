@@ -3,13 +3,8 @@ name: Deploy Frontend to Vercel
 on:
   push:
     branches: [ main, master ]
-    paths:
-      - 'frontend/**'
-      - '.github/workflows/deploy-frontend.yml'
   pull_request:
     branches: [ main, master ]
-    paths:
-      - 'frontend/**'
 
 jobs:
   deploy:
