@@ -1619,7 +1619,9 @@ class PuppeteerSCRAAgent:
             print(f"❌ No screenshots to add (hasattr: {hasattr(self, 'screenshots')}, length: {len(getattr(self, 'screenshots', []))})")
         
         if hasattr(self, 'pdf_data') and self.pdf_data:
-            response['automationResult']['pdf'] = self.pdf_data
+            # Create a copy of PDF data without raw_bytes for response
+            pdf_response_data = {k: v for k, v in self.pdf_data.items() if k != 'raw_bytes'}
+            response['automationResult']['pdf'] = pdf_response_data
             print(f"✅ Added PDF data to response: {self.pdf_data['filename']} ({len(self.pdf_data['data'])} chars)")
         else:
             print(f"❌ No PDF data to add (hasattr: {hasattr(self, 'pdf_data')}, data: {self.pdf_data is not None if hasattr(self, 'pdf_data') else 'N/A'})")
