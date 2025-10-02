@@ -12,20 +12,14 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    container: ghcr.io/railwayapp/cli:latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         
-      - name: Install Railway CLI
-        run: |
-          npm install -g @railway/cli
-          
       - name: Deploy to Railway
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
-          RAILWAY_ENVIRONMENT: production
-        run: |
-          railway up --service backend --detach
+        run: railway up --service=backend --detach
 
