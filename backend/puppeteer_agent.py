@@ -566,7 +566,7 @@ class PuppeteerSCRAAgent:
     # ---------------------
     # Cross-frame utilities
     # ---------------------
-    async def _query_selector_any_frame_visible(self, selector: str, timeout_ms: int = 3000):
+    async def _query_selector_any_frame_visible(self, selector: str, timeout_ms: int = 2000):
         """Find first visible element matching selector in page or any frame."""
         try:
             el = await self.page.query_selector(selector)
@@ -883,7 +883,7 @@ class PuppeteerSCRAAgent:
             await self._take_debug_screenshot("01_main_page_loaded", "Initial SCRA login page loaded")
             
             # Wait for page to fully load
-            await self.page.wait_for_timeout(2000)
+            await self.page.wait_for_timeout(500)
             
             # Handle any agreement/privacy popups first
             await self._handle_agreements()
@@ -930,7 +930,7 @@ class PuppeteerSCRAAgent:
         
         # Wait for navigation or login result
         try:
-            await self.page.wait_for_load_state('networkidle', timeout=20000)
+            await self.page.wait_for_load_state('domcontentloaded', timeout=10000)
         except TimeoutError:
             print("⚠️ Page didn't reach network idle, trying domcontentloaded...")
             try:
@@ -947,7 +947,7 @@ class PuppeteerSCRAAgent:
         
         # Wait for the app shell to render in cloud environments
         await self.page.wait_for_load_state('domcontentloaded')
-        await self.page.wait_for_timeout(2000)
+        await self.page.wait_for_timeout(500)
         
         # Take screenshot for debugging
         await self._take_debug_screenshot("03_after_login", "After login form submission")
@@ -1126,7 +1126,7 @@ class PuppeteerSCRAAgent:
             await self._take_debug_screenshot("06_after_agreements_verification", "After handling agreements on verification page")
             
             # Wait for verification form elements
-            await self.page.wait_for_timeout(2000)
+            await self.page.wait_for_timeout(500)
     
     async def _verify_on_verification_form(self):
         """Verify we're actually on the verification form, not login page"""
@@ -1479,7 +1479,7 @@ class PuppeteerSCRAAgent:
                 await self._take_debug_screenshot("11_no_results", "No clear results detected")
         
         # Wait additional time for any remaining dynamic content
-        await self.page.wait_for_timeout(2000)
+        await self.page.wait_for_timeout(500)
         
         # Take final screenshot
         await self._take_debug_screenshot("12_final_state", "Final page state after submission")
@@ -1948,7 +1948,7 @@ class PuppeteerSCRAAgent:
             self.uploaded_filename = proper_filename
             
             # Wait for page to fully load and take a screenshot for debugging
-            await self.page.wait_for_timeout(3000)
+            await self.page.wait_for_timeout(1000)
             await self._take_debug_screenshot("07_before_file_upload", "Page state before looking for Choose Files button")
             
             # Step 1: Find and click "Choose Files" button
@@ -2001,11 +2001,11 @@ class PuppeteerSCRAAgent:
                 await choose_files_button.click()
                 
                 # Wait for file selection to complete
-                await self.page.wait_for_timeout(2000)
+                await self.page.wait_for_timeout(500)
             
-            # Wait a bit longer for the upload to process
+            # Wait for the upload to process
             print("⏳ Waiting for upload to process...")
-            await self.page.wait_for_timeout(5000)  # Wait 5 seconds
+            await self.page.wait_for_timeout(2000)  # Reduced from 5 to 2 seconds
             
             # Capture any console errors from the SCRA website
             print("🔍 Checking for console errors...")
@@ -2397,13 +2397,13 @@ class PuppeteerSCRAAgent:
         # Wait for processing to complete and look for "Files Uploaded in Last 24 Hours" table
         print("⏳ Step 5: Waiting for upload processing and looking for files table...")
         
-        processing_timeout = 120  # 2 minutes for multi-record processing
+        processing_timeout = 60  # Reduced from 2 minutes to 1 minute
         elapsed = 0
         files_table_found = False
         
         while elapsed < processing_timeout and not files_table_found:
-            await self.page.wait_for_timeout(5000)  # Check every 5 seconds
-            elapsed += 5
+            await self.page.wait_for_timeout(2000)  # Check every 2 seconds instead of 5
+            elapsed += 2
             
             # Look for "Files Uploaded in Last 24 Hours" table or text
             files_table_selectors = [
@@ -2426,7 +2426,7 @@ class PuppeteerSCRAAgent:
                 except:
                     continue
             
-            if elapsed % 30 == 0:  # Log every 30 seconds
+            if elapsed % 10 == 0:  # Log every 10 seconds instead of 30
                 print(f"   Still waiting for files table... ({elapsed}s)")
         
         await self._take_debug_screenshot("13_files_table_status", "Files table status after upload")
@@ -2462,7 +2462,7 @@ class PuppeteerSCRAAgent:
                 await self._take_debug_screenshot("14_download_results_clicked", "Download Results link clicked")
                 
                 # Wait for results page to load
-                await self.page.wait_for_timeout(3000)
+                await self.page.wait_for_timeout(1000)
                 
                 # Step 7: Find our uploaded file in the table and click Certificate download
                 await self._download_certificate_from_table(fixed_width_content)
@@ -2614,7 +2614,7 @@ class PuppeteerSCRAAgent:
                 
                 # Wait for Certificate Download popup to appear
                 print("⏳ Waiting for Certificate Download popup...")
-                await self.page.wait_for_timeout(2000)
+                await self.page.wait_for_timeout(500)
                 await self._take_debug_screenshot("17_certificate_popup_appeared", "Certificate download popup")
                 
                 # Look for the "Download PDF" button in the popup
@@ -2643,13 +2643,13 @@ class PuppeteerSCRAAgent:
                     
                     # Wait for PDF download
                     print("⏳ Waiting for certificate PDF download...")
-                    download_timeout = 30
+                    download_timeout = 15  # Reduced from 30 to 15 seconds
                     elapsed = 0
                     
                     while not hasattr(self, 'pdf_data') or not self.pdf_data and elapsed < download_timeout:
-                        await self.page.wait_for_timeout(1000)
-                        elapsed += 1
-                        if elapsed % 5 == 0:
+                        await self.page.wait_for_timeout(500)  # Check every 500ms instead of 1s
+                        elapsed += 0.5
+                        if elapsed % 3 == 0:  # Report every 3 seconds instead of 5
                             print(f"   Still waiting for PDF download... ({elapsed}s)")
                     
                     if hasattr(self, 'pdf_data') and self.pdf_data:
@@ -2661,7 +2661,7 @@ class PuppeteerSCRAAgent:
                     print("⚠️ Could not find Download PDF button in popup")
                     await self._take_debug_screenshot("18_no_download_pdf_button", "No Download PDF button found")
                     # Try to proceed anyway in case the download started automatically
-                    await self.page.wait_for_timeout(3000)
+                    await self.page.wait_for_timeout(1000)
             
             else:
                 print("⚠️ Could not find certificate download link for our file")
@@ -2699,7 +2699,7 @@ class PuppeteerSCRAAgent:
                     if await link.is_visible():
                         print(f"✅ Trying fallback download link: {selector}")
                         await link.click()
-                        await self.page.wait_for_timeout(3000)
+                        await self.page.wait_for_timeout(1000)
                         download_found = True
                         break
                 if download_found:
