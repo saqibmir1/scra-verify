@@ -96,6 +96,7 @@ RAILWAY_SERVICE_ID=your_service_id
 
 - **Frontend**: https://frontend-ruddy-sigma-11.vercel.app
 - **Backend**: (To be deployed)
+- **CI/CD**: ✅ Testing automatic deployment
 
 ## 📝 Environment Variables
 
