@@ -43,6 +43,7 @@ RUN apt-get update && apt-get install -y \
     libxdmcp6 \
     libxinerama1 \
     fonts-liberation \
+    libgbm1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Poetry
