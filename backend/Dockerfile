@@ -24,6 +24,10 @@ RUN poetry config virtualenvs.create false
 # Install Python dependencies
 RUN poetry install --no-root
 
+# Install Playwright browsers (before switching to non-root user)
+RUN poetry run playwright install chromium
+RUN poetry run playwright install-deps
+
 # Copy application code
 COPY backend/ .
 
