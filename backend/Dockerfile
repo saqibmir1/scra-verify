@@ -4,12 +4,52 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install minimal system dependencies
+# Install minimal system dependencies and Playwright browser dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     build-essential \
     git \
     ca-certificates \
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxss1 \
+    libgconf-2-4 \
+    libxrandr2 \
+    libasound2 \
+    libpangocairo-1.0-0 \
+    libatk1.0-0 \
+    libcairo-gobject2 \
+    libgtk-3-0 \
+    libgdk-pixbuf2.0-0 \
+    libxcomposite1 \
+    libxcursor1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxi6 \
+    libxrender1 \
+    libxtst6 \
+    libglib2.0-0 \
+    libc6 \
+    libcairo2 \
+    libdbus-1-3 \
+    libexpat1 \
+    libfontconfig1 \
+    libgcc1 \
+    libgpg-error0 \
+    libice6 \
+    libsm6 \
+    libuuid1 \
+    libx11-6 \
+    libx11-xcb1 \
+    libxau6 \
+    libxcb1 \
+    libxdmcp6 \
+    libxinerama1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Poetry
@@ -26,7 +66,6 @@ RUN poetry install --no-root
 
 # Install Playwright browsers (before switching to non-root user)
 RUN poetry run playwright install chromium
-RUN poetry run playwright install-deps
 
 # Copy application code
 COPY backend/ .
