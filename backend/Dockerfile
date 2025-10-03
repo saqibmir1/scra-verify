@@ -17,14 +17,12 @@ RUN apt-get update && apt-get install -y \
     libcups2 \
     libdrm2 \
     libxss1 \
-    libgconf-2-4 \
     libxrandr2 \
     libasound2 \
     libpangocairo-1.0-0 \
-    libatk1.0-0 \
     libcairo-gobject2 \
     libgtk-3-0 \
-    libgdk-pixbuf2.0-0 \
+    libgdk-pixbuf-2.0-0 \
     libxcomposite1 \
     libxcursor1 \
     libxdamage1 \
@@ -34,22 +32,17 @@ RUN apt-get update && apt-get install -y \
     libxrender1 \
     libxtst6 \
     libglib2.0-0 \
-    libc6 \
     libcairo2 \
     libdbus-1-3 \
     libexpat1 \
     libfontconfig1 \
-    libgcc1 \
-    libgpg-error0 \
-    libice6 \
-    libsm6 \
-    libuuid1 \
     libx11-6 \
     libx11-xcb1 \
     libxau6 \
     libxcb1 \
     libxdmcp6 \
     libxinerama1 \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Poetry
