@@ -50,7 +50,7 @@ RUN apt-get update && apt-get install -y \
 RUN pip install poetry
 
 # Copy poetry files
-COPY backend/pyproject.toml backend/poetry.lock* ./
+COPY pyproject.toml poetry.lock* ./
 
 # Configure poetry to not create virtual env (we're in container)
 RUN poetry config virtualenvs.create false
@@ -59,7 +59,7 @@ RUN poetry config virtualenvs.create false
 RUN poetry install --no-root
 
 # Copy application code
-COPY backend/ .
+COPY . .
 
 # Create a non-root user
 RUN useradd --create-home --shell /bin/bash app
