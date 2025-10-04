@@ -339,6 +339,9 @@ class SupabaseService:
             else:
                 storage_path = f"sessions/{session_id}/pdfs/{filename}"
             
+            print(f"📤 Uploading PDF to: {storage_path}")
+            print(f"📊 PDF size: {len(pdf_data)} bytes")
+            
             response = self.client.storage.from_("verification-files").upload(
                 storage_path, 
                 pdf_data, 
@@ -349,10 +352,16 @@ class SupabaseService:
             )
             
             if response:
+                print(f"✅ PDF uploaded successfully to {storage_path}")
                 return True
             
+            print(f"⚠️ PDF upload returned empty response for {storage_path}")
             return False
         except Exception as e:
+            print(f"❌ PDF upload error for {session_id}/{filename}: {str(e)}")
+            print(f"   Error type: {type(e).__name__}")
+            import traceback
+            print(f"   Traceback: {traceback.format_exc()}")
             return False
 
     # File Storage
