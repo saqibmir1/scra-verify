@@ -10,13 +10,17 @@ interface VerificationRecord {
   sessionId: string;
   userId: string;
   formData: {
-    firstName: string;
-    lastName: string;
+    firstName?: string;
+    lastName?: string;
     middleName?: string;
     suffix?: string;
-    ssn: string;
-    dateOfBirth: string;
-    activeDutyDate: string;
+    ssn?: string;
+    dateOfBirth?: string;
+    activeDutyDate?: string;
+    // Multi-record fields
+    type?: string;
+    record_count?: number;
+    fixed_width_preview?: string;
   };
   result: {
     success: boolean;
@@ -27,6 +31,8 @@ interface VerificationRecord {
       matchReasonCode: string;
       covered: boolean;
     };
+    error?: string;
+    data?: any;
   };
   status: 'completed' | 'failed' | 'in_progress';
   timestamp: string;
@@ -486,7 +492,10 @@ export default function VerificationDetailPage() {
                   Verification Details
                 </h1>
                 <p className="text-gray-600">
-                  {record.formData.firstName} {record.formData.middleName && `${record.formData.middleName} `}{record.formData.lastName} {record.formData.suffix}
+                  {record.formData.type === 'multi_record' 
+                    ? `Multi-Record Batch (${record.formData.record_count || 0} records)`
+                    : `${record.formData.firstName || ''} ${record.formData.middleName ? `${record.formData.middleName} ` : ''}${record.formData.lastName || ''} ${record.formData.suffix || ''}`
+                  }
                 </p>
               </div>
               <div className="text-right">
@@ -518,29 +527,60 @@ export default function VerificationDetailPage() {
                   <h2 className="text-lg font-semibold text-gray-900">Service Member Information</h2>
                 </div>
                 <div className="p-6 space-y-4">
-                  <div>
-                    <label className="text-sm font-medium text-gray-500">Full Name</label>
-                    <p className="mt-1 text-sm text-gray-900">
-                      {record.formData.firstName} {record.formData.middleName && `${record.formData.middleName} `}{record.formData.lastName} {record.formData.suffix}
-                    </p>
-                  </div>
-                  
-                  <div>
-                    <label className="text-sm font-medium text-gray-500">SSN</label>
-                    <p className="mt-1 text-sm text-gray-900">
-                      ***-**-{record.formData.ssn.slice(-4)}
-                    </p>
-                  </div>
-                  
-                  <div>
-                    <label className="text-sm font-medium text-gray-500">Date of Birth</label>
-                    <p className="mt-1 text-sm text-gray-900">{record.formData.dateOfBirth}</p>
-                  </div>
-                  
-                  <div>
-                    <label className="text-sm font-medium text-gray-500">Active Duty Date</label>
-                    <p className="mt-1 text-sm text-gray-900">{record.formData.activeDutyDate}</p>
-                  </div>
+                  {record.formData.type === 'multi_record' ? (
+                    <>
+                      <div>
+                        <label className="text-sm font-medium text-gray-500">Verification Type</label>
+                        <p className="mt-1 text-sm text-gray-900">Multi-Record Batch</p>
+                      </div>
+                      
+                      <div>
+                        <label className="text-sm font-medium text-gray-500">Record Count</label>
+                        <p className="mt-1 text-sm text-gray-900">{record.formData.record_count || 0} records</p>
+                      </div>
+                      
+                      {record.formData.fixed_width_preview && (
+                        <div>
+                          <label className="text-sm font-medium text-gray-500">Data Preview</label>
+                          <pre className="mt-1 text-xs font-mono text-gray-600 bg-gray-50 p-2 rounded overflow-x-auto">
+                            {record.formData.fixed_width_preview}
+                          </pre>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <label className="text-sm font-medium text-gray-500">Full Name</label>
+                        <p className="mt-1 text-sm text-gray-900">
+                          {record.formData.firstName} {record.formData.middleName && `${record.formData.middleName} `}{record.formData.lastName} {record.formData.suffix}
+                        </p>
+                      </div>
+                      
+                      {record.formData.ssn && (
+                        <div>
+                          <label className="text-sm font-medium text-gray-500">SSN</label>
+                          <p className="mt-1 text-sm text-gray-900">
+                            ***-**-{record.formData.ssn.slice(-4)}
+                          </p>
+                        </div>
+                      )}
+                      
+                      {record.formData.dateOfBirth && (
+                        <div>
+                          <label className="text-sm font-medium text-gray-500">Date of Birth</label>
+                          <p className="mt-1 text-sm text-gray-900">{record.formData.dateOfBirth}</p>
+                        </div>
+                      )}
+                      
+                      {record.formData.activeDutyDate && (
+                        <div>
+                          <label className="text-sm font-medium text-gray-500">Active Duty Date</label>
+                          <p className="mt-1 text-sm text-gray-900">{record.formData.activeDutyDate}</p>
+                        </div>
+                      )}
+                    </>
+                  )}
 
                   <div>
                     <label className="text-sm font-medium text-gray-500">Session ID</label>
