@@ -29,7 +29,12 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000", 
-        "http://localhost:3001"
+        "http://localhost:3001",
+        "https://scra-verify.vercel.app",
+        "https://saqibmir.site",
+        "http://saqibmir.site",
+        "https://scra.saqibmir.site",
+        "http://scra.saqibmir.site"
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST"],
