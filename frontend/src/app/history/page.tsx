@@ -145,8 +145,10 @@ export default function HistoryPage() {
       const { getScreenshotUrls } = await import('../../lib/supabase');
       const screenshotUrls = await getScreenshotUrls(user.id, sessionId);
       
+      console.log(`📸 Screenshots for ${sessionId}:`, screenshotUrls);
+      
       if (screenshotUrls.length === 0) {
-        setError('No screenshots found for this session.');
+        setError('No screenshots found for this session. They may not have been captured during verification.');
         return;
       }
       
@@ -155,8 +157,9 @@ export default function HistoryPage() {
         window.open(screenshot.url, '_blank');
       });
       
-    } catch {
-      setError('Failed to view screenshots. They may not be available.');
+    } catch (err) {
+      console.error('Screenshot error:', err);
+      setError(`Failed to view screenshots: ${(err as Error).message}`);
     }
   };
 
@@ -167,11 +170,14 @@ export default function HistoryPage() {
       // Try different possible PDF filenames in order of preference
       const possibleFilenames = [
         'scra_result.pdf',
-        'scra_verification_report.pdf'
+        'scra_verification_report.pdf',
+        'scra_multi_record_result.pdf'
       ];
       
       let downloadURL: string | null = null;
       let foundFilename: string | null = null;
+      
+      console.log(`📄 Looking for PDF in session: ${sessionId}`);
       
       // Check each possible filename
       for (const filename of possibleFilenames) {
@@ -179,23 +185,29 @@ export default function HistoryPage() {
           const { getPdfUrl } = await import('../../lib/supabase');
           const url = await getPdfUrl(user.id, sessionId, filename);
           
+          console.log(`🔍 Checking ${filename}:`, url ? 'Found' : 'Not found');
+          
           if (url) {
             downloadURL = url;
             foundFilename = filename;
             break;
           }
-        } catch {
+        } catch (err) {
+          console.log(`❌ Error checking ${filename}:`, err);
           continue;
         }
       }
       
       if (downloadURL) {
+        console.log(`✅ Opening PDF: ${foundFilename}`);
         window.open(downloadURL, '_blank');
       } else {
-        setError('PDF not found for this verification session.');
+        console.warn('❌ No PDF found in storage');
+        setError('PDF not found for this verification session. It may not have been generated yet.');
       }
-    } catch {
-      setError('Failed to download PDF. It may not be available.');
+    } catch (err) {
+      console.error('PDF download error:', err);
+      setError(`Failed to download PDF: ${(err as Error).message}`);
     }
   };
 
