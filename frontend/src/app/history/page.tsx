@@ -104,7 +104,7 @@ export default function HistoryPage() {
       const total = records.length;
       const successful = records.filter(r => r.status === 'completed' && r.result?.success).length;
       const failed = records.filter(r => r.status === 'failed' || (r.status === 'completed' && !r.result?.success)).length;
-      const errors = records.filter(r => r.status === 'failed').length;
+      const errors = 0; // Deprecated: errors are already included in failed count
       
       setStats({
         total,
@@ -311,7 +311,7 @@ export default function HistoryPage() {
                 </div>
                 <div className="ml-4">
                   <p className="text-sm font-medium text-gray-500">Failed</p>
-                  <p className="text-2xl font-semibold text-gray-900">{stats.failed + stats.errors}</p>
+                  <p className="text-2xl font-semibold text-gray-900">{stats.failed}</p>
                 </div>
               </div>
             </div>
