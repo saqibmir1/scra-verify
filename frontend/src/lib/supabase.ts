@@ -124,13 +124,18 @@ export interface VerificationRecord {
   sessionId: string;
   userId: string;
   formData: {
-    firstName: string;
-    lastName: string;
+    // Single record fields
+    firstName?: string;
+    lastName?: string;
     middleName?: string;
     suffix?: string;
-    ssn: string;
-    dateOfBirth: string;
-    activeDutyDate: string;
+    ssn?: string;
+    dateOfBirth?: string;
+    activeDutyDate?: string;
+    // Multi-record fields
+    type?: string;
+    record_count?: number;
+    fixed_width_preview?: string;
   };
   result: {
     success: boolean;
@@ -145,6 +150,7 @@ export interface VerificationRecord {
     pdfUrl?: string;
     error?: string;
     timestamp: string;
+    data?: any;
   };
   status: 'completed' | 'failed' | 'in_progress';
   timestamp: string;
@@ -174,8 +180,8 @@ export async function saveVerificationToSupabase(verification: VerificationRecor
 const verificationCache = new Map<string, { data: VerificationRecord[], timestamp: number }>();
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
 
-export async function getUserVerifications(userId: string, useCache: boolean = true): Promise<VerificationRecord[]> {
-  const cacheKey = `verifications_${userId}`;
+export async function getUserVerifications(userId: string, useCache: boolean = true, limit: number = 25): Promise<VerificationRecord[]> {
+  const cacheKey = `verifications_${userId}_${limit}`;
   const now = Date.now();
 
   // Check cache first
@@ -186,52 +192,84 @@ export async function getUserVerifications(userId: string, useCache: boolean = t
     }
   }
 
-  const { data, error } = await supabase
-    .from('verifications')
-    .select(`
-      id,
-      session_id,
-      user_id,
-      form_data,
-      result->>success,
-      result->>method,
-      result->>error,
-      result->>timestamp,
-      result->eligibility,
-      status,
-      timestamp,
-      created_at
-    `)
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false });
+  // Retry logic for transient database issues
+  let lastError: any = null;
+  const maxRetries = 2;
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const { data, error } = await supabase
+        .from('verifications')
+        .select(`
+          id,
+          session_id,
+          user_id,
+          form_data,
+          result->>success,
+          result->>method,
+          result->>error,
+          result->>timestamp,
+          result->eligibility,
+          status,
+          timestamp,
+          created_at
+        `)
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(limit)
+        .abortSignal(AbortSignal.timeout(15000)); // 15 second timeout
 
-  if (error) throw error;
+      if (error) {
+        // Check if it's a timeout error
+        if (error.message?.includes('timeout') || error.code === '57014') {
+          lastError = error;
+          if (attempt < maxRetries) {
+            // Wait before retry (exponential backoff)
+            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+            continue;
+          }
+        }
+        throw error;
+      }
 
-  const mappedData = (data || []).map(record => ({
-    id: record.id,
-    sessionId: record.session_id,
-    userId: record.user_id,
-    formData: record.form_data,
-    result: {
-      success: record.success === 'true' || record.success === true,
-      method: record.method || '',
-      error: record.error || undefined,
-      timestamp: record.timestamp || '',
-      eligibility: record.eligibility || undefined,
-      // File data excluded for performance - will be loaded separately when needed
-      data: undefined
-    },
-    status: record.status,
-    timestamp: record.timestamp,
-    createdAt: record.created_at
-  }));
+      const mappedData: VerificationRecord[] = (data || []).map((record: any) => ({
+        id: record.id,
+        sessionId: record.session_id,
+        userId: record.user_id,
+        formData: record.form_data,
+        result: {
+          success: record.success === 'true' || record.success === true,
+          method: record.method || '',
+          error: record.error || undefined,
+          timestamp: record.timestamp || '',
+          eligibility: record.eligibility as any, // Cast to any since we're getting JSON from Supabase
+          pdfDownloaded: false,
+          pdfUrl: undefined,
+        },
+        status: record.status,
+        timestamp: record.timestamp,
+        createdAt: record.created_at
+      }));
 
-  // Cache the results
-  if (useCache) {
-    verificationCache.set(cacheKey, { data: mappedData, timestamp: now });
+      // Cache the results
+      if (useCache) {
+        verificationCache.set(cacheKey, { data: mappedData, timestamp: now });
+      }
+
+      return mappedData;
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxRetries) {
+        // Wait before retry
+        await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+        continue;
+      }
+      throw err;
+    }
   }
-
-  return mappedData;
+  
+  // If we get here, all retries failed
+  throw lastError || new Error('Failed to fetch verifications after retries');
 }
 
 export async function getVerificationDetails(userId: string, sessionId: string): Promise<VerificationRecord | null> {
@@ -272,15 +310,22 @@ export async function deleteVerification(sessionId: string, userId: string): Pro
   clearVerificationCache(userId);
 }
 
-// Cache for screenshots and PDFs
+// Cache for screenshots and PDFs (longer duration to reduce repeated signed URL generation)
 const screenshotCache = new Map<string, { data: Array<{name: string, url: string}>, timestamp: number }>();
 const pdfCache = new Map<string, { data: string | null, timestamp: number }>();
+const SIGNED_URL_CACHE_DURATION = 30 * 60 * 1000; // 30 minutes (signed URLs expire after 1 hour)
 
 // Cache management functions
 export function clearVerificationCache(userId?: string): void {
   if (userId) {
-    const cacheKey = `verifications_${userId}`;
-    verificationCache.delete(cacheKey);
+    // Clear all cache entries for this user (regardless of limit)
+    const keysToDelete: string[] = [];
+    verificationCache.forEach((_, key) => {
+      if (key.startsWith(`verifications_${userId}`)) {
+        keysToDelete.push(key);
+      }
+    });
+    keysToDelete.forEach(key => verificationCache.delete(key));
   } else {
     verificationCache.clear();
     screenshotCache.clear();
@@ -322,7 +367,7 @@ export async function uploadScreenshotsToSupabase(
 
       if (error) throw error;
     } catch (error) {
-      console.error(`❌ Failed to upload screenshot ${screenshot.filename}:`, error);
+      console.error(`Failed to upload screenshot ${screenshot.filename}:`, error);
       throw error;
     }
   }
@@ -358,28 +403,41 @@ export async function uploadPdfToSupabase(
 
     if (error) throw error;
   } catch (error) {
-    console.error(`❌ Failed to upload PDF:`, error);
+    console.error(`Failed to upload PDF:`, error);
     throw error;
   }
 }
 
 export async function getFileUrl(filePath: string): Promise<string> {
-  const { data } = supabase.storage
+  // Use createSignedUrl for private buckets (expires in 1 hour)
+  const { data, error } = await supabase.storage
     .from('verification-files')
-    .getPublicUrl(filePath);
+    .createSignedUrl(filePath, 3600);
   
-  return data.publicUrl;
+  if (error) {
+    console.error(`Error creating signed URL for ${filePath}:`, error);
+    throw error;
+  }
+  
+  return data.signedUrl;
 }
 
 export async function downloadPdf(userId: string, sessionId: string, filename: string): Promise<void> {
   try {
     const filePath = `users/${userId}/verifications/${sessionId}/pdfs/${filename}`;
-    const { data } = supabase.storage
+    
+    // Use createSignedUrl for private buckets
+    const { data, error } = await supabase.storage
       .from('verification-files')
-      .getPublicUrl(filePath);
+      .createSignedUrl(filePath, 3600); // 1 hour expiration
+    
+    if (error) {
+      console.error(`Error creating signed URL for PDF:`, error);
+      throw error;
+    }
     
     // Open in new tab for download
-    window.open(data.publicUrl, '_blank');
+    window.open(data.signedUrl, '_blank');
   } catch (error) {
     console.error('Error downloading PDF:', error);
     throw error;
@@ -390,74 +448,68 @@ export async function getScreenshotUrls(userId: string, sessionId: string, useCa
   const cacheKey = `screenshots_${userId}_${sessionId}`;
   const now = Date.now();
 
-  // Check cache first
+  // Check cache first (use longer cache for signed URLs)
   if (useCache && screenshotCache.has(cacheKey)) {
     const cached = screenshotCache.get(cacheKey)!;
-    if (now - cached.timestamp < CACHE_DURATION) {
+    if (now - cached.timestamp < SIGNED_URL_CACHE_DURATION) {
       return cached.data;
     }
   }
 
+  // Try multiple possible paths based on actual Supabase structure
+  const pathsToTry = [
+    `sessions/${sessionId}/screenshots`,
+    `users/${userId}/verifications/${sessionId}/screenshots`,
+  ];
   
-  // Try sessions/ path first (where backend actually uploads screenshots)
-  let data, error;
-  let foundInSessionsPath = false;
+  let data: any[] = [];
+  let error: any = null;
+  let foundPath: string | null = null;
   
   try {
-    const sessionsResponse = await supabase.storage
-      .from('verification-files')
-      .list(`sessions/${sessionId}/screenshots`);
-    
-    if (sessionsResponse.data && sessionsResponse.data.length > 0) {
-      data = sessionsResponse.data;
-      error = sessionsResponse.error;
-      foundInSessionsPath = true;
-    } else {
-      
-      // Fallback to users/ path
-      const userResponse = await supabase.storage
+    for (const path of pathsToTry) {
+      const response = await supabase.storage
         .from('verification-files')
-        .list(`users/${userId}/verifications/${sessionId}/screenshots`);
+        .list(path);
       
-      if (userResponse.data && userResponse.data.length > 0) {
-        data = userResponse.data;
-        error = userResponse.error;
-        foundInSessionsPath = false;
-      } else {
-        data = [];
-        error = null;
+      if (response.data && response.data.length > 0) {
+        data = response.data;
+        error = response.error;
+        foundPath = path;
+        break;
       }
     }
   } catch (e) {
-    console.error('❌ Error fetching screenshots:', e);
+    console.error('Error fetching screenshots:', e);
     throw e;
   }
 
   if (error) throw error;
 
-  // Get public URLs for each screenshot
+  // Generate SIGNED URLs for each screenshot (bucket is private)
   const screenshots = [];
   for (const file of data || []) {
-    // Use the correct path based on where we found the files
-    const filePath = foundInSessionsPath 
-      ? `sessions/${sessionId}/screenshots/${file.name}`
-      : `users/${userId}/verifications/${sessionId}/screenshots/${file.name}`;
+    if (!foundPath) continue;
     
+    const filePath = `${foundPath}/${file.name}`;
     
-    const { data: urlData } = supabase.storage
+    const { data: urlData, error: urlError } = await supabase.storage
       .from('verification-files')
-      .getPublicUrl(filePath);
+      .createSignedUrl(filePath, 3600);
     
+    if (urlError) {
+      console.error(`Error creating signed URL for ${filePath}:`, urlError);
+      continue;
+    }
     
     screenshots.push({
       name: file.name,
-      url: urlData.publicUrl
+      url: urlData.signedUrl
     });
   }
 
-
   // Cache the results
-  if (useCache) {
+  if (useCache && screenshots.length > 0) {
     screenshotCache.set(cacheKey, { data: screenshots, timestamp: now });
   }
   
@@ -468,38 +520,30 @@ export async function getPdfUrl(userId: string, sessionId: string, filename: str
   const cacheKey = `pdf_${userId}_${sessionId}_${filename}`;
   const now = Date.now();
 
-  // Check cache first
+  // Check cache first (use longer cache for signed URLs)
   if (useCache && pdfCache.has(cacheKey)) {
     const cached = pdfCache.get(cacheKey)!;
-    if (now - cached.timestamp < CACHE_DURATION) {
+    if (now - cached.timestamp < SIGNED_URL_CACHE_DURATION) {
       return cached.data;
     }
   }
 
   try {
+    const pdfDir = `users/${userId}/verifications/${sessionId}/pdfs`;
+    const filePath = `${pdfDir}/${filename}`;
     
-    // Use consistent storage structure: users/{userId}/verifications/{sessionId}/pdfs/{filename}
-    const filePath = `users/${userId}/verifications/${sessionId}/pdfs/${filename}`;
-    
-    const { data } = supabase.storage
+    const { data, error } = await supabase.storage
       .from('verification-files')
-      .getPublicUrl(filePath);
+      .createSignedUrl(filePath, 3600);
     
-    
-    // Test if the URL is accessible by checking if file exists
-    let result: string | null = null;
-    try {
-      const response = await fetch(data.publicUrl, { method: 'HEAD' });
-      if (response.ok) {
-        result = data.publicUrl;
-      } else {
-        result = null;
-      }
-    } catch (fetchError) {
-      result = null;
+    if (error) {
+      console.error(`Error creating signed URL for PDF ${filePath}:`, error);
+      return null;
     }
+    
+    const result = data.signedUrl;
 
-    // Cache the result (even if null)
+    // Cache the result
     if (useCache) {
       pdfCache.set(cacheKey, { data: result, timestamp: now });
     }
@@ -603,18 +647,22 @@ export function subscribeToScreenshots(
         table: 'verification_screenshots',
         filter: `session_id=eq.${sessionId}`
       },
-      (payload) => {
+      async (payload) => {
         if (payload.new) {
           const screenshot = payload.new as VerificationScreenshot;
-          // Get public URL for the screenshot
-          const { data } = supabase.storage
-            .from('verification-files')
-            .getPublicUrl(screenshot.storage_path);
-          
-          onScreenshotUpdate({
-            ...screenshot,
-            url: data.publicUrl
-          } as any);
+          // Get signed URL for the screenshot (bucket is private)
+          if (screenshot.storage_path) {
+            const { data, error } = await supabase.storage
+              .from('verification-files')
+              .createSignedUrl(screenshot.storage_path, 3600);
+            
+            if (!error && data) {
+              onScreenshotUpdate({
+                ...screenshot,
+                url: data.signedUrl
+              } as any);
+            }
+          }
         }
       }
     )
@@ -689,13 +737,21 @@ export async function getSessionScreenshots(sessionId: string): Promise<Verifica
 
     if (supabaseError) throw supabaseError;
 
-    // Add public URLs to screenshots
-    return (data || []).map(screenshot => ({
-      ...screenshot,
-      url: supabase.storage
+    // Add signed URLs to screenshots (bucket is private)
+    const screenshotsWithUrls = [];
+    for (const screenshot of data || []) {
+      const { data: urlData, error: urlError } = await supabase.storage
         .from('verification-files')
-        .getPublicUrl(screenshot.storage_path).data.publicUrl
-    } as VerificationScreenshot));
+        .createSignedUrl(screenshot.storage_path, 3600);
+      
+      if (!urlError && urlData) {
+        screenshotsWithUrls.push({
+          ...screenshot,
+          url: urlData.signedUrl
+        } as VerificationScreenshot);
+      }
+    }
+    return screenshotsWithUrls;
   }
 }
 

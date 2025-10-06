@@ -10,13 +10,18 @@ interface VerificationRecord {
   sessionId: string;
   userId: string;
   formData: {
-    firstName: string;
-    lastName: string;
+    // Single record fields
+    firstName?: string;
+    lastName?: string;
     middleName?: string;
     suffix?: string;
-    ssn: string;
-    dateOfBirth: string;
-    activeDutyDate: string;
+    ssn?: string;
+    dateOfBirth?: string;
+    activeDutyDate?: string;
+    // Multi-record fields
+    type?: string;
+    record_count?: number;
+    fixed_width_preview?: string;
   };
   result: {
     success: boolean;
@@ -27,6 +32,8 @@ interface VerificationRecord {
       matchReasonCode: string;
       covered: boolean;
     };
+    error?: string;
+    data?: any;
   };
   status: 'completed' | 'failed' | 'in_progress';
   timestamp: string;
@@ -62,9 +69,10 @@ export default function HistoryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const { user } = useAuth();
 
-  const fetchHistory = async () => {
+  const fetchHistory = async (showRefreshIndicator: boolean = false) => {
     if (!user) {
       setHistory([]);
       setStats(null);
@@ -91,9 +99,14 @@ export default function HistoryPage() {
     }
 
     try {
-      setLoading(true);
+      if (showRefreshIndicator) {
+        setIsRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      
       const { getUserVerifications } = await import('../../lib/supabase');
-      const records = await getUserVerifications(user.id, true); // Use cache
+      const records = await getUserVerifications(user.id, !showRefreshIndicator); // Use cache for initial load only
       
       // Sort records by createdAt in JavaScript (newest first)
       records.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -116,9 +129,15 @@ export default function HistoryPage() {
       
       setError(null);
     } catch (err) {
-      setError(`Failed to load verification history: ${(err as any).message || err}`);
+      const errorMsg = (err as any).message || err;
+      if (errorMsg.includes('timeout') || errorMsg.includes('57014')) {
+        setError(`Database timeout - your history has many records. Please wait a moment and try refreshing.`);
+      } else {
+        setError(`Failed to load verification history: ${errorMsg}`);
+      }
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -144,8 +163,6 @@ export default function HistoryPage() {
       // Get all screenshots for this session from Supabase Storage
       const { getScreenshotUrls } = await import('../../lib/supabase');
       const screenshotUrls = await getScreenshotUrls(user.id, sessionId);
-      
-      console.log(`📸 Screenshots for ${sessionId}:`, screenshotUrls);
       
       if (screenshotUrls.length === 0) {
         setError('No screenshots found for this session. They may not have been captured during verification.');
@@ -177,15 +194,11 @@ export default function HistoryPage() {
       let downloadURL: string | null = null;
       let foundFilename: string | null = null;
       
-      console.log(`📄 Looking for PDF in session: ${sessionId}`);
-      
       // Check each possible filename
       for (const filename of possibleFilenames) {
         try {
           const { getPdfUrl } = await import('../../lib/supabase');
           const url = await getPdfUrl(user.id, sessionId, filename);
-          
-          console.log(`🔍 Checking ${filename}:`, url ? 'Found' : 'Not found');
           
           if (url) {
             downloadURL = url;
@@ -193,16 +206,13 @@ export default function HistoryPage() {
             break;
           }
         } catch (err) {
-          console.log(`❌ Error checking ${filename}:`, err);
           continue;
         }
       }
       
       if (downloadURL) {
-        console.log(`✅ Opening PDF: ${foundFilename}`);
         window.open(downloadURL, '_blank');
       } else {
-        console.warn('❌ No PDF found in storage');
         setError('PDF not found for this verification session. It may not have been generated yet.');
       }
     } catch (err) {
@@ -258,7 +268,7 @@ export default function HistoryPage() {
   // Listen for verification completion to refresh history
   useEffect(() => {
     const handleVerificationCompleted = () => {
-      fetchHistory();
+      fetchHistory(true); // Show refresh indicator
     };
 
     window.addEventListener('verificationCompleted', handleVerificationCompleted);
@@ -266,15 +276,86 @@ export default function HistoryPage() {
     return () => {
       window.removeEventListener('verificationCompleted', handleVerificationCompleted);
     };
-  }, [user]); // Include user in dependency to re-setup listener when user changes
+  }, [user]);
+
+  // Real-time subscription to verifications table for instant updates
+  useEffect(() => {
+    if (!user) return;
+    
+    const { supabase } = require('../../lib/supabase');
+    const channel = supabase
+      .channel('history_updates')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'verifications',
+          filter: `user_id=eq.${user.id}`
+        },
+        (payload: any) => {
+          const refreshWithDelay = async () => {
+            const { clearVerificationCache } = await import('../../lib/supabase');
+            clearVerificationCache(user.id);
+            await fetchHistory(true);
+          };
+          refreshWithDelay();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'verifications',
+          filter: `user_id=eq.${user.id}`
+        },
+        (payload: any) => {
+          const refreshWithDelay = async () => {
+            const { clearVerificationCache } = await import('../../lib/supabase');
+            clearVerificationCache(user.id);
+            await fetchHistory(true);
+          };
+          refreshWithDelay();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user])
 
   return (
     <AppWrapper>
       <Layout>
       <div className="p-6">
         <div className="mb-6">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Verification History</h1>
-          <p className="text-gray-600">View and manage past military status verifications</p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900 mb-2 flex items-center">
+                Verification History
+                {isRefreshing && (
+                  <span className="ml-3 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 animate-pulse">
+                    <svg className="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-blue-600" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Updating...
+                  </span>
+                )}
+              </h1>
+              <p className="text-gray-600">View and manage past military status verifications</p>
+            </div>
+            {!loading && (
+              <div className="text-sm text-gray-500">
+                <svg className="inline w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Real-time updates enabled
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Stats Cards */}
@@ -351,18 +432,20 @@ export default function HistoryPage() {
           <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
             <h2 className="text-lg font-medium text-gray-900">Recent Verifications</h2>
             <button
-              onClick={async () => {
+              onClick={async (e) => {
+                e.preventDefault();
                 // Clear cache and fetch fresh data
                 const { clearVerificationCache } = await import('../../lib/supabase');
                 clearVerificationCache(user?.id);
-                fetchHistory();
+                await fetchHistory(true);
               }}
-              className="inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+              disabled={isRefreshing}
+              className={`inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed ${isRefreshing ? 'cursor-wait' : ''}`}
             >
-              <svg className="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className={`w-4 h-4 mr-1.5 ${isRefreshing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
-              Refresh
+              {isRefreshing ? 'Refreshing...' : 'Refresh'}
             </button>
           </div>
 
@@ -381,7 +464,7 @@ export default function HistoryPage() {
               <p className="text-gray-900 font-medium">Error loading history</p>
               <p className="text-gray-500">{error}</p>
               <button
-                onClick={fetchHistory}
+                onClick={() => fetchHistory(false)}
                 className="mt-4 inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
               >
                 Try Again
@@ -430,23 +513,42 @@ export default function HistoryPage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {history.map((record) => (
+                  {history.map((record, index) => (
                     <tr 
                       key={record.sessionId} 
-                      className="hover:bg-gray-50 cursor-pointer transition-colors"
+                      className="hover:bg-blue-50 cursor-pointer transition-all duration-150 border-l-4 border-transparent hover:border-blue-500 hover:shadow-sm"
                       onClick={() => {
                         router.push(`/history/${record.sessionId}`);
+                      }}
+                      style={{
+                        animation: isRefreshing && index === 0 ? 'slideInFromTop 0.3s ease-out' : 'none'
                       }}
                     >
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
                           <div>
-                            <div className="text-sm font-medium text-gray-900">
-                              {record.formData.firstName} {record.formData.middleName && `${record.formData.middleName} `}{record.formData.lastName} {record.formData.suffix}
-                            </div>
-                            <div className="text-sm text-gray-500">
-                              DOB: {record.formData.dateOfBirth} | Active: {record.formData.activeDutyDate}
-                            </div>
+                            {record.formData.type === 'multi_record' ? (
+                              <>
+                                <div className="text-sm font-medium text-gray-900 flex items-center">
+                                  <svg className="w-4 h-4 mr-1.5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                                  </svg>
+                                  Multi-Record Batch
+                                </div>
+                                <div className="text-sm text-gray-500">
+                                  {record.formData.record_count || 0} records processed
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <div className="text-sm font-medium text-gray-900">
+                                  {record.formData.firstName} {record.formData.middleName && `${record.formData.middleName} `}{record.formData.lastName} {record.formData.suffix}
+                                </div>
+                                <div className="text-sm text-gray-500">
+                                  DOB: {record.formData.dateOfBirth} | Active: {record.formData.activeDutyDate}
+                                </div>
+                              </>
+                            )}
                           </div>
                           <div className="ml-auto">
                             <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -456,7 +558,13 @@ export default function HistoryPage() {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {record.formData.ssn ? `***-**-${record.formData.ssn.slice(-4)}` : 'N/A'}
+                        {record.formData.type === 'multi_record' ? (
+                          <span className="text-gray-400 italic">Batch</span>
+                        ) : record.formData.ssn ? (
+                          `***-**-${record.formData.ssn.slice(-4)}`
+                        ) : (
+                          'N/A'
+                        )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         {getStatusBadge(record)}

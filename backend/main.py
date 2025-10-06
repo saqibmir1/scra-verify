@@ -187,9 +187,8 @@ async def verify_active_duty(person_data: PersonData, request: Request, authoriz
         # Create session ID for this verification
         session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # Initialize Puppeteer agent with user_id for real-time updates
-        agent = PuppeteerSCRAAgent(username, password, user_id)
-        agent.session_id = session_id
+        # Initialize Puppeteer agent with session_id and user_id for real-time updates
+        agent = PuppeteerSCRAAgent(username, password, user_id, session_id)
         
         # Convert Pydantic model to dict for the agent
         person_dict = person_data.model_dump()
@@ -424,9 +423,8 @@ async def verify_multi_records(data: MultiRecordVerifyData, request: Request, au
         # Create session ID for this verification
         session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # Initialize Puppeteer agent with user_id for real-time updates
-        agent = PuppeteerSCRAAgent(username, password, user_id)
-        agent.session_id = session_id
+        # Initialize Puppeteer agent with session_id and user_id for real-time updates
+        agent = PuppeteerSCRAAgent(username, password, user_id, session_id)
         
         # Perform multi-record verification using fixed-width content directly
         result = await agent.verify_multiple_records_fixed_width(data.fixed_width_content)

@@ -24,7 +24,7 @@ def is_development_mode() -> bool:
 class PuppeteerSCRAAgent:
     """Puppeteer-based automation for SCRA website"""
     
-    def __init__(self, username: str, password: str, user_id: Optional[str] = None):
+    def __init__(self, username: str, password: str, user_id: Optional[str] = None, session_id: Optional[str] = None):
         self.username = username
         self.password = password
         self.user_id = user_id
@@ -34,7 +34,8 @@ class PuppeteerSCRAAgent:
         self.browser: Optional[Browser] = None
         self.context = None
         self.page: Optional[Page] = None
-        self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Use provided session_id or generate new one (for backward compatibility)
+        self.session_id = session_id if session_id else datetime.now().strftime("%Y%m%d_%H%M%S")
         
         # File capture for direct frontend transmission
         self.screenshots = []
@@ -711,16 +712,15 @@ class PuppeteerSCRAAgent:
                 if description:
                     print(f"   Description: {description}")
                 
-                # Upload to Supabase Storage immediately
-                if self.user_id:
-                    await self.supabase_service.upload_screenshot_realtime(
-                        self.session_id,
-                        step_name,
-                        filename,
-                        description,
-                        screenshot_bytes,
-                        self.user_id
-                    )
+                # Upload to Supabase Storage immediately (always upload, regardless of auth)
+                await self.supabase_service.upload_screenshot_realtime(
+                    self.session_id,
+                    step_name,
+                    filename,
+                    description,
+                    screenshot_bytes,
+                    self.user_id
+                )
                 
                 # Convert to base64 for legacy frontend transmission
                 import base64
@@ -1414,15 +1414,13 @@ class PuppeteerSCRAAgent:
                     'raw_bytes': pdf_data  # Store raw bytes for splitting
                 }
                 
-                # Upload to Supabase Storage immediately
-                if self.user_id:
-                    await self.supabase_service.upload_pdf_realtime(
-                        self.session_id,
-                        pdf_filename,
-                        pdf_data,
-                        self.user_id
-                    )
-                    print(f"📤 PDF uploaded to Supabase Storage: {pdf_filename}")
+                # Upload to Supabase Storage immediately (always upload, regardless of auth)
+                upload_success = await self.supabase_service.upload_pdf_realtime(
+                    self.session_id,
+                    pdf_filename,
+                    pdf_data,
+                    self.user_id
+                )
                 
                 # Save debug copy to local filesystem
                 if self.session_debug_dir and self.session_debug_dir is not None:
@@ -1923,7 +1921,6 @@ class PuppeteerSCRAAgent:
     
     async def _upload_multi_record_file(self, fixed_width_content: str):
         """Upload the fixed-width file to the multi-record form following the correct SCRA workflow"""
-        print("📤 Starting multi-record file upload workflow...")
         
         # Generate proper filename (same as API endpoint)
         from datetime import datetime
@@ -1985,7 +1982,6 @@ class PuppeteerSCRAAgent:
                 if file_input:
                     print("✅ Found file input directly")
                     await file_input.set_input_files(temp_file_path)
-                    print("✅ File uploaded via direct input")
                 else:
                     raise Exception("Could not find 'Choose Files' button or file input")
             else:
@@ -2049,7 +2045,6 @@ class PuppeteerSCRAAgent:
                 try:
                     element = await self._query_selector_any_frame_visible(selector)
                     if element and await element.is_visible():
-                        print(f"✅ Upload success confirmed: {selector}")
                         upload_success = True
                         break
                 except:
@@ -2072,7 +2067,6 @@ class PuppeteerSCRAAgent:
                         element = await self._query_selector_any_frame_visible(selector)
                         if element and await element.is_visible():
                             error_text = await element.text_content()
-                            print(f"❌ Upload error detected: {error_text}")
                             error_found = True
                             break
                     except:
@@ -2362,15 +2356,13 @@ class PuppeteerSCRAAgent:
                     'raw_bytes': pdf_data  # Store raw bytes for splitting
                 }
                 
-                # Upload to Supabase Storage immediately
-                if self.user_id:
-                    await self.supabase_service.upload_pdf_realtime(
-                        self.session_id,
-                        pdf_filename,
-                        pdf_data,
-                        self.user_id
-                    )
-                    print(f"📤 PDF uploaded to Supabase Storage: {pdf_filename}")
+                # Upload to Supabase Storage immediately (always upload, regardless of auth)
+                upload_success = await self.supabase_service.upload_pdf_realtime(
+                    self.session_id,
+                    pdf_filename,
+                    pdf_data,
+                    self.user_id
+                )
                 
                 # Save debug copy to local filesystem
                 if self.session_debug_dir and self.session_debug_dir is not None:
@@ -2874,15 +2866,13 @@ class PuppeteerSCRAAgent:
             
             print(f"✅ PDF generated from page: {len(pdf_data)} bytes")
             
-            # Upload to Supabase Storage
-            if self.user_id:
-                await self.supabase_service.upload_pdf_realtime(
-                    self.session_id,
-                    pdf_filename,
-                    pdf_data,
-                    self.user_id
-                )
-                print(f"📤 Generated PDF uploaded to Supabase Storage: {pdf_filename}")
+            # Upload to Supabase Storage (always upload, regardless of auth)
+            upload_success = await self.supabase_service.upload_pdf_realtime(
+                self.session_id,
+                pdf_filename,
+                pdf_data,
+                self.user_id
+            )
             
             # Save debug copy to local filesystem
             if self.session_debug_dir and self.session_debug_dir is not None:

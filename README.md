@@ -207,24 +207,66 @@ Backend runs on `http://localhost:8000`
 
 ### 4. Supabase Setup
 
-1. Create a Supabase project at [supabase.com](https://supabase.com)
-2. Run the database setup script:
+1. **Create a Supabase project** at [supabase.com](https://supabase.com)
 
-```bash
-cd backend
-poetry run python scripts/init_supabase.py
-```
+2. **Setup Database Tables:**
+   
+   Run the initialization script:
+   ```bash
+   cd backend
+   poetry run python scripts/init_supabase.py
+   ```
 
-3. Enable Google OAuth:
+3. **Create Storage Bucket:**
+   - Go to Supabase Dashboard → Storage → Create bucket
+   - Name: `verification-files`
+   - **Set as PRIVATE** (uncheck "Public bucket")
+   - Click "Create bucket"
+
+4. **Setup Storage Policies:**
+   
+   Go to Supabase Dashboard → SQL Editor and run:
+   ```sql
+   -- Allow authenticated users to read all files in verification-files bucket
+   CREATE POLICY "Authenticated users can read verification files"
+   ON storage.objects FOR SELECT
+   TO authenticated
+   USING (bucket_id = 'verification-files');
+
+   -- Allow service role (backend) to manage files
+   CREATE POLICY "Service role can insert verification files"
+   ON storage.objects FOR INSERT
+   TO service_role
+   WITH CHECK (bucket_id = 'verification-files');
+
+   CREATE POLICY "Service role can update verification files"
+   ON storage.objects FOR UPDATE
+   TO service_role
+   USING (bucket_id = 'verification-files');
+
+   CREATE POLICY "Service role can delete verification files"
+   ON storage.objects FOR DELETE
+   TO service_role
+   USING (bucket_id = 'verification-files');
+   ```
+   
+   Or copy from `backend/scripts/schema.sql` (lines 50-75)
+
+5. **Enable Google OAuth:**
    - Go to Supabase Dashboard → Authentication → Providers
    - Enable Google
-   - Add Google OAuth credentials
-   - Add redirect URL: `https://your-project.supabase.co/auth/v1/callback`
+   - Add your Google OAuth credentials
+   - Add redirect URLs:
+     - Production: `https://your-project.supabase.co/auth/v1/callback`
+     - Local: `http://localhost:54321/auth/v1/callback`
 
-4. Create Storage Bucket:
-   - Go to Storage → Create bucket
-   - Name: `verification-files`
-   - Set as public
+6. **Configure Google Cloud Console:**
+   - Go to [Google Cloud Console](https://console.cloud.google.com)
+   - Navigate to APIs & Services → Credentials
+   - Edit your OAuth 2.0 Client ID
+   - Add authorized redirect URIs:
+     - `https://your-project.supabase.co/auth/v1/callback`
+     - `http://localhost:3000` (for local development)
 
 ---
 

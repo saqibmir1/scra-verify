@@ -246,12 +246,7 @@ class SupabaseService:
     
     def test_storage_connection(self) -> bool:
         """Test that storage is reachable and the required bucket exists."""
-        exists = self.check_bucket_exists()
-        if exists:
-            print(f"🔍 Storage connection test passed for bucket '{self.bucket_name}'")
-        else:
-            print(f"❌ Storage connection test failed or bucket '{self.bucket_name}' missing")
-        return exists
+        return self.check_bucket_exists()
 
     def check_required_tables(self) -> Dict[str, bool]:
         """Check presence of required tables by attempting a minimal select."""

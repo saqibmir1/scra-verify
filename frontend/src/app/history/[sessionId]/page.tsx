@@ -110,13 +110,6 @@ export default function VerificationDetailPage() {
   const { user } = useAuth();
   const sessionId = params?.sessionId as string;
 
-  console.log('🔍 VerificationDetailPage mounted:', {
-    params,
-    sessionId,
-    hasUser: !!user,
-    userId: user?.id
-  });
-
   const [record, setRecord] = useState<VerificationRecord | null>(null);
   const [screenshots, setScreenshots] = useState<Screenshot[]>([]);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
@@ -126,26 +119,11 @@ export default function VerificationDetailPage() {
   const [isInitialized, setIsInitialized] = useState(false);
 
   useEffect(() => {
-    console.log('🔄 useEffect triggered:', {
-      hasUser: !!user,
-      sessionId: sessionId,
-      isInitialized: isInitialized
-    });
-    
-    if (!user) {
-      console.log('❌ No user authenticated');
-      return;
-    }
-    
-    if (!sessionId) {
-      console.log('❌ No sessionId parameter');
-      setError('No session ID provided');
-      setLoading(false);
-      return;
-    }
-    
-    if (isInitialized) {
-      console.log('⏭️ Already initialized, skipping fetch');
+    if (!user || !sessionId || isInitialized) {
+      if (!sessionId) {
+        setError('No session ID provided');
+        setLoading(false);
+      }
       return;
     }
 
@@ -157,26 +135,14 @@ export default function VerificationDetailPage() {
 
     try {
       setLoading(true);
-      console.log(`📄 Fetching details for session: ${sessionId}`);
-      console.log(`👤 User ID: ${user.id}`);
 
-      // Skip sessionStorage caching to avoid quota issues
-      // Rely on in-memory Supabase caching for better performance
-
-      // Get verification record with full details
-      console.log('🔍 Fetching verification details from database...');
       const { getVerificationDetails } = await import('../../../lib/supabase');
       let foundRecord = await getVerificationDetails(user.id, sessionId);
-      
-      console.log(`🎯 Looking for session ID: ${sessionId}`);
 
       if (!foundRecord) {
-        console.error(`❌ Verification record not found for sessionId: ${sessionId}`);
-        
         // Try URL decoding the sessionId in case it's encoded
         const decodedSessionId = decodeURIComponent(sessionId);
         if (decodedSessionId !== sessionId) {
-          console.log(`🔄 Trying with decoded session ID: ${decodedSessionId}`);
           foundRecord = await getVerificationDetails(user.id, decodedSessionId);
         }
         
@@ -187,130 +153,72 @@ export default function VerificationDetailPage() {
         }
       }
 
-      console.log('✅ Found verification record:', {
-        sessionId: foundRecord.sessionId,
-        status: foundRecord.status,
-        createdAt: foundRecord.createdAt
-      });
-
       setRecord(foundRecord);
 
-      // Get screenshots from storage with detailed debugging
+      // Get screenshots from storage
       let screenshotUrls: Screenshot[] = [];
-      
-      console.log('🔍 Attempting to load screenshots...');
-      console.log('📍 Expected storage path: users/{userId}/verifications/{sessionId}/screenshots/');
-      console.log('📍 Resolved path:', `users/${user.id}/verifications/${sessionId}/screenshots/`);
       
       try {
         const { getScreenshotUrls } = await import('../../../lib/supabase');
-        console.log('📸 Calling getScreenshotUrls with:', {
-          userId: user.id,
-          sessionId: sessionId,
-          useCache: true
-        });
-        
-        screenshotUrls = await getScreenshotUrls(user.id, sessionId, true); // Use cache
+        screenshotUrls = await getScreenshotUrls(user.id, sessionId, true);
         setScreenshots(screenshotUrls);
-        
-        console.log(`📸 Screenshot results:`, {
-          count: screenshotUrls.length,
-          screenshots: screenshotUrls.map(s => ({ name: s.name, url: s.url }))
-        });
         
         if (screenshotUrls.length > 0) {
           setSelectedScreenshot(screenshotUrls[0]);
-          console.log('✅ Selected first screenshot:', screenshotUrls[0].name);
-        } else {
-          console.log('⚠️ No screenshots found in storage');
         }
       } catch (err) {
-        console.error('❌ Error loading screenshots from storage:', err);
-        console.error('Storage error details:', {
-          message: (err as any)?.message,
-          stack: (err as any)?.stack
-        });
+        console.error('Error loading screenshots:', err);
         
-        // Try alternative storage path (sessions/ instead of users/)
-        console.log('🔄 Trying alternative storage path: sessions/{sessionId}/screenshots/');
+        // Try alternative storage path
         try {
-          // Manually check the sessions path
           const { supabase } = await import('../../../lib/supabase');
           const alternativePath = `sessions/${sessionId}/screenshots`;
-          console.log('📍 Alternative path:', alternativePath);
           
           const { data: files, error: listError } = await supabase.storage
             .from('verification-files')
             .list(alternativePath);
             
-          if (listError) {
-            console.error('❌ Alternative path failed:', listError);
-          } else {
-            console.log('📂 Files found in alternative path:', files?.length || 0);
-            if (files && files.length > 0) {
-              console.log('📋 Alternative path files:', files.map(f => f.name));
+          if (!listError && files && files.length > 0) {
+            const alternativeUrls: Screenshot[] = [];
+            for (const file of files) {
+              const filePath = `sessions/${sessionId}/screenshots/${file.name}`;
+              const { data: urlData, error: urlError } = await supabase.storage
+                .from('verification-files')
+                .createSignedUrl(filePath, 3600);
               
-              // Convert to screenshot URLs using alternative path
-              const alternativeUrls: Screenshot[] = [];
-              for (const file of files) {
-                const filePath = `sessions/${sessionId}/screenshots/${file.name}`;
-                const { data: urlData } = supabase.storage
-                  .from('verification-files')
-                  .getPublicUrl(filePath);
-                
+              if (!urlError && urlData) {
                 alternativeUrls.push({
                   name: file.name,
-                  url: urlData.publicUrl
+                  url: urlData.signedUrl
                 });
               }
-              
-              screenshotUrls = alternativeUrls;
-              setScreenshots(screenshotUrls);
-              
-              if (screenshotUrls.length > 0) {
-                setSelectedScreenshot(screenshotUrls[0]);
-              }
-              console.log(`✅ Found ${screenshotUrls.length} screenshots from alternative path`);
             }
-          }
-        } catch (altErr) {
-          console.error('❌ Alternative path also failed:', altErr);
-        }
-        
-        // Last fallback: try to get screenshots from session database data
-        if (screenshotUrls.length === 0) {
-          console.log('🔄 Trying session database fallback...');
-          try {
-            const { getSessionScreenshots } = await import('../../../lib/supabase');
-            const sessionScreenshots = await getSessionScreenshots(sessionId);
-            screenshotUrls = sessionScreenshots.map(s => ({
-              name: s.filename,
-              url: s.url
-            }));
+            
+            screenshotUrls = alternativeUrls;
             setScreenshots(screenshotUrls);
             
             if (screenshotUrls.length > 0) {
               setSelectedScreenshot(screenshotUrls[0]);
             }
-            console.log(`📸 Found ${screenshotUrls.length} screenshots from session database`);
-          } catch (sessionErr) {
-            console.error('❌ Session database fallback failed:', sessionErr);
           }
+        } catch (altErr) {
+          console.error('Error loading from alternative path:', altErr);
         }
       }
 
       // Get PDF URL
-      let foundPdfUrl: string | null = null;
       try {
         const { getPdfUrl } = await import('../../../lib/supabase');
-        const possibleFilenames = ['scra_result.pdf', 'scra_verification_report.pdf'];
+        const possibleFilenames = [
+          'scra_result.pdf',
+          'scra_verification_report.pdf',
+          'scra_multi_record_result.pdf'
+        ];
         
         for (const filename of possibleFilenames) {
-          const url = await getPdfUrl(user.id, sessionId, filename, true); // Use cache
+          const url = await getPdfUrl(user.id, sessionId, filename, true);
           if (url) {
-            foundPdfUrl = url;
             setPdfUrl(url);
-            console.log(`📄 Found PDF: ${filename}`);
             break;
           }
         }
@@ -318,18 +226,10 @@ export default function VerificationDetailPage() {
         console.error('Error loading PDF:', err);
       }
 
-      // Skip sessionStorage caching - data is already cached in memory by Supabase functions
-
       setError(null);
       setIsInitialized(true);
     } catch (err) {
-      console.error('❌ Error fetching verification details:', err);
-      console.error('Error details:', {
-        message: (err as any)?.message,
-        stack: (err as any)?.stack,
-        sessionId,
-        userId: user?.id
-      });
+      console.error('Error fetching verification details:', err);
       
       let errorMessage = 'Failed to load verification details';
       if (err instanceof Error) {
@@ -403,20 +303,36 @@ export default function VerificationDetailPage() {
       <AppWrapper>
         <Layout>
           <div className="p-6 max-w-6xl mx-auto">
-            <div className="animate-pulse">
-              <div className="h-8 bg-gray-200 rounded mb-4 w-1/3"></div>
-              <div className="h-4 bg-gray-200 rounded mb-8 w-1/2"></div>
-              <div className="space-y-6">
-                <div className="h-64 bg-gray-200 rounded"></div>
-                <div className="h-48 bg-gray-200 rounded"></div>
-              </div>
-              {/* Debug info while loading */}
-              <div className="mt-4 p-4 bg-gray-100 rounded text-xs">
-                <p>🔍 Debug Info:</p>
-                <p>Session ID: {sessionId || 'undefined'}</p>
-                <p>Has User: {user ? 'Yes' : 'No'}</p>
-                <p>User ID: {user?.id || 'undefined'}</p>
-                <p>Params: {JSON.stringify(params)}</p>
+            {/* Loading State with Progress Bar */}
+            <div className="flex items-center justify-center min-h-[60vh]">
+              <div className="text-center max-w-md w-full px-4">
+                <div className="animate-spin rounded-full h-20 w-20 border-b-4 border-blue-600 mx-auto mb-6"></div>
+                <h3 className="text-2xl font-bold text-gray-900 mb-2">Loading Verification</h3>
+                <p className="text-gray-600 mb-8">Fetching verification details, screenshots, and PDF...</p>
+                
+                {/* Animated Progress Bar */}
+                <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden mb-4">
+                  <div className="h-full bg-gradient-to-r from-blue-500 via-blue-600 to-blue-500 rounded-full animate-loading-bar bg-[length:200%_100%]"></div>
+                </div>
+                
+                <div className="space-y-2 text-sm text-gray-500">
+                  <div className="flex items-center justify-center space-x-2">
+                    <div className="animate-pulse">📄</div>
+                    <span>Loading record details...</span>
+                  </div>
+                  <div className="flex items-center justify-center space-x-2">
+                    <div className="animate-pulse">📸</div>
+                    <span>Fetching screenshots...</span>
+                  </div>
+                  <div className="flex items-center justify-center space-x-2">
+                    <div className="animate-pulse">📋</div>
+                    <span>Preparing PDF certificate...</span>
+                  </div>
+                </div>
+                
+                <p className="text-xs text-gray-400 mt-6 italic">
+                  This may take 5-10 seconds for verifications with many screenshots
+                </p>
               </div>
             </div>
           </div>
@@ -436,16 +352,6 @@ export default function VerificationDetailPage() {
               </svg>
               <h2 className="text-xl font-semibold text-gray-900 mb-2">Error Loading Verification</h2>
               <p className="text-gray-600 mb-4">{error || 'Verification record not found'}</p>
-              
-              {/* Debug info for troubleshooting */}
-              <div className="mb-4 p-4 bg-gray-100 rounded text-xs text-left">
-                <p className="font-semibold mb-2">🔍 Debug Information:</p>
-                <p>Session ID from URL: {sessionId || 'undefined'}</p>
-                <p>Has User: {user ? 'Yes' : 'No'}</p>
-                <p>User ID: {user?.id || 'undefined'}</p>
-                <p>URL Params: {JSON.stringify(params)}</p>
-                <p>Initialized: {isInitialized ? 'Yes' : 'No'}</p>
-              </div>
               
               <div className="space-x-3">
                 <button

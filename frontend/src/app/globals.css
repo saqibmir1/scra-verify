@@ -39,3 +39,29 @@ form input, form select, form label, form h2 {
 .bg-white input, .bg-white select, .bg-white label, .bg-white h2 {
   color: #111827 !important;
 }
+
+/* Slide-in animation for new history items */
+@keyframes slideInFromTop {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Loading bar animation */
+@keyframes loading-bar {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.animate-loading-bar {
+  animation: loading-bar 2s linear infinite;
+}

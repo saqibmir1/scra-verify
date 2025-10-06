@@ -38,26 +38,31 @@ class SCRARecord:
         if not date_str:
             return ''
         
-        # Remove any non-digit characters
-        digits = re.sub(r'\D', '', str(date_str))
+        date_str = str(date_str).strip()
+        
+        # Remove any non-digit characters for length check
+        digits = re.sub(r'\D', '', date_str)
         
         # If already 8 digits, assume YYYYMMDD
         if len(digits) == 8:
             return digits
         
-        # Try to parse various formats
+        # Try to parse various formats including MM/DD/YY
         date_formats = [
-            '%Y-%m-%d',
-            '%m/%d/%Y',
-            '%m-%d-%Y',
-            '%Y/%m/%d',
-            '%d/%m/%Y',
-            '%d-%m-%Y'
+            '%m/%d/%y',    # NEW: 10/29/86 (2-digit year)
+            '%m-%d-%y',    # NEW: 10-29-86
+            '%m/%d/%Y',    # 10/29/1986
+            '%m-%d-%Y',    # 10-29-1986
+            '%Y-%m-%d',    # 1986-10-29
+            '%Y/%m/%d',    # 1986/10/29
+            '%d/%m/%Y',    # 29/10/1986 (European)
+            '%d-%m-%Y',    # 29-10-1986
+            '%d/%m/%y',    # 29/10/86 (European)
         ]
         
         for fmt in date_formats:
             try:
-                dt = datetime.strptime(str(date_str).strip(), fmt)
+                dt = datetime.strptime(date_str, fmt)
                 return dt.strftime('%Y%m%d')
             except ValueError:
                 continue
@@ -196,7 +201,9 @@ class CSVProcessor:
     """Processes CSV files for SCRA multi-record verification"""
     
     def __init__(self):
+        # Core required columns for new format
         self.required_columns = ['ssn', 'last_name', 'first_name', 'active_duty_status_date']
+        # Optional columns (now includes date_of_birth, middle_name, customer_record_id)
         self.optional_columns = ['date_of_birth', 'middle_name', 'customer_record_id']
         self.all_columns = self.required_columns + self.optional_columns
     
@@ -358,11 +365,11 @@ def process_csv_for_scra(csv_content: str) -> Tuple[str, List[SCRARecord], List[
 
 # Example usage and testing
 if __name__ == "__main__":
-    # Test CSV content
-    test_csv = """ssn,first_name,last_name,date_of_birth,active_duty_status_date,middle_name,customer_record_id
-123456789,John,Doe,19900101,20200101,M,CUST001
-987654321,Jane,Smith,,20210615,A,CUST002
-555666777,Bob,Johnson,19851215,20190301,,CUST003"""
+    # Test CSV content (new format with MM/DD/YY dates)
+    test_csv = """ssn,first_name,last_name,date_of_birth,active_duty_status_date
+123456789,John,Doe,10/29/86,10/5/25
+987654321,Jane,Smith,10/29/86,10/5/25
+555666777,Bob,Johnson,10/29/86,10/5/25"""
     
     processor = CSVProcessor()
     records, errors = processor.parse_csv_content(test_csv)
@@ -379,7 +386,12 @@ if __name__ == "__main__":
         fixed_width = processor.generate_fixed_width_file(records)
         print(fixed_width)
         
-        print(f"\nFirst record (95 chars): '{records[0].to_fixed_width()}' (length: {len(records[0].to_fixed_width())})")
+        print(f"\nFirst record: '{records[0].to_fixed_width()}' (length: {len(records[0].to_fixed_width())})")
+        
+        # Show parsed dates
+        print("\nParsed dates:")
+        for i, record in enumerate(records, 1):
+            print(f"  Record {i}: DOB={record.date_of_birth}, Active Duty={record.active_duty_status_date}")
 
 
 def process_csv_for_scra(csv_content: str) -> Tuple[str, List[SCRARecord], List[str]]:
